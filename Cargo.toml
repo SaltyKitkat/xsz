@@ -1,0 +1,11 @@
+[package]
+name = "xsz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossbeam = "0.8.4"
+jwalk = "0.8.1"
+mimalloc = "0.1.43"
+nohash = "0.2.0"
+rustix = {version = "0.38.43", features = ["fs"]}
