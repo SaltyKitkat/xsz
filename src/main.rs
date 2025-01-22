@@ -210,7 +210,7 @@ struct TaskPak<T> {
 }
 
 impl<T> TaskPak<T> {
-    const SIZE: usize = 4096 / size_of::<T>();
+    const SIZE: usize = 1024 * 32 / size_of::<T>();
     pub fn new(handler: impl FnMut(Box<[T]>) + Send + 'static) -> Self {
         Self {
             inner: Vec::with_capacity(Self::SIZE),
