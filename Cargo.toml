@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-crossbeam = "0.8.4"
+async-channel = "2.3.1"
 jwalk = { path = "../jwalk" }
 mimalloc = "0.1.43"
 nohash = "0.2.0"
 rustix = {version = "0.38.43", features = ["fs"]}
+smol = "2.0.2"

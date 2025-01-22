@@ -1,22 +1,29 @@
 use std::{
+    future::Future,
+    marker::Send,
     sync::{Arc, Weak},
-    thread::spawn,
 };
 
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use async_channel::{unbounded, Receiver, Sender};
+use smol::spawn;
 
 pub trait Actor {
     type Message: Send + 'static;
     type Ret: Send + 'static;
-    fn on_start(&mut self, ctx: &mut Context<Self>)
+    fn on_start(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = ()> + Send
     where
         Self: Sized,
     {
+        async {}
     }
-    fn handle(&mut self, ctx: &mut Context<Self>, msg: Self::Message)
+    fn handle(
+        &mut self,
+        ctx: &mut Context<Self>,
+        msg: Self::Message,
+    ) -> impl Future<Output = ()> + Send
     where
         Self: Sized;
-    fn on_exit(&mut self, ctx: &mut Context<Self>) -> Self::Ret
+    fn on_exit(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = Self::Ret> + Send
     where
         Self: Sized;
 }
@@ -34,20 +41,16 @@ impl<A: Actor> Clone for Addr<A> {
 }
 
 impl<A: Actor> Addr<A> {
-    pub fn send(&self, msg: A::Message) -> Result<(), A::Message> {
-        self.sender.send(msg).map_err(|e| e.0)
+    pub async fn send(&self, msg: A::Message) -> Result<(), A::Message> {
+        self.sender.send(msg).await.map_err(|e| e.0)
     }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ActorState {
-    Running,
-    ToStop,
+    pub fn send_blocking(&self, msg: A::Message) -> Result<(), A::Message> {
+        self.sender.send_blocking(msg).map_err(|e| e.0)
+    }
 }
 
 pub struct Context<A: Actor> {
     addr: Weak<Sender<A::Message>>,
-    state: ActorState,
 }
 
 pub struct OnExit<A: Actor>(A::Ret);
@@ -62,8 +65,8 @@ impl<A: Actor + 'static> Context<A> {
         Act::Ret: Into<A::Message>,
     {
         let ret_sender = self.addr().unwrap();
-        run_one_actor(actor, move |ret| {
-            ret_sender.send(ret.into()).ok();
+        run_one_actor(actor, move |ret| async move {
+            ret_sender.send(ret.into()).await.ok();
         })
     }
     pub fn spawn_n<Act>(
@@ -77,36 +80,36 @@ impl<A: Actor + 'static> Context<A> {
     {
         let ret_sender = self.addr().unwrap();
         run_n_actor(n, f, move |ret| {
-            ret_sender.send(ret.into()).ok();
+            let ret_sender = ret_sender.clone();
+            async move {
+                ret_sender.send(ret.into()).await.ok();
+            }
         })
     }
 }
 
-fn run_actor<A: Actor>(
+async fn run_actor<A: Actor>(
     addr: Addr<A>,
     mut actor: A,
     receiver: Receiver<A::Message>,
 ) -> <A as Actor>::Ret {
     let mut ctx = Context {
         addr: Arc::downgrade(&addr.sender),
-        state: ActorState::Running,
     };
-    actor.on_start(&mut ctx);
+    actor.on_start(&mut ctx).await;
     // drop the sender here, prevent dead lock lead to actor not stop
     drop(addr);
-    for msg in receiver.into_iter() {
-        actor.handle(&mut ctx, msg);
-        if ctx.state == ActorState::ToStop {
-            break;
-        }
+    while let Ok(msg) = receiver.recv().await {
+        actor.handle(&mut ctx, msg).await;
     }
-    actor.on_exit(&mut ctx)
+    actor.on_exit(&mut ctx).await
 }
 
-fn run_one_actor<A, F>(actor: A, ret_handler: F) -> Addr<A>
+fn run_one_actor<A, F, Fut>(actor: A, ret_handler: F) -> Addr<A>
 where
     A: Actor + Send + 'static,
-    F: FnOnce(A::Ret) + Send + 'static,
+    F: FnOnce(A::Ret) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
 {
     let (sender, receiver) = unbounded();
     let addr = Addr {
@@ -114,19 +117,21 @@ where
     };
     {
         let addr = addr.clone();
-        spawn(move || {
-            let ret = run_actor(addr, actor, receiver);
-            ret_handler(ret);
-        });
+        spawn(async move {
+            let ret = run_actor(addr, actor, receiver).await;
+            ret_handler(ret).await;
+        })
+        .detach();
     }
     addr
 }
 
-fn run_n_actor<F, A, FRet>(n: usize, f: F, f_ret: FRet) -> Addr<A>
+fn run_n_actor<F, A, FRet, Fut>(n: usize, f: F, f_ret: FRet) -> Addr<A>
 where
     F: Fn(usize) -> A + Send + Sync + 'static,
-    A: Actor + 'static,
-    FRet: Fn(A::Ret) + Send + Sync + 'static,
+    A: Actor + Send + 'static,
+    FRet: Fn(A::Ret) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send,
 {
     let (sender, receiver) = unbounded();
     let addr = Addr {
@@ -138,35 +143,36 @@ where
         {
             let addr = addr.clone();
             let receiver = receiver.clone();
-            spawn(move || {
+            spawn(async move {
                 let actor = (f.0)(i);
-                let ret = run_actor(addr, actor, receiver);
-                (f.1)(ret);
-            });
+                let ret = run_actor(addr, actor, receiver).await;
+                (f.1)(ret).await;
+            })
+            .detach();
         }
     });
     addr
 }
 
-pub fn block_on<A: Actor>(actor: A) -> A::Ret {
+pub async fn block_on<A: Actor>(actor: A) -> A::Ret {
     let (sender, receiver) = unbounded();
     let addr = Addr {
         sender: Arc::new(sender),
     };
-    run_actor(addr, actor, receiver)
+    run_actor(addr, actor, receiver).await
 }
 
 pub fn spawn_actor<A>(actor: A) -> Addr<A>
 where
     A: Actor + Send + 'static,
 {
-    run_one_actor(actor, |_| {})
+    run_one_actor(actor, |_| async {})
 }
 
 pub fn spawn_n_actor<F, A>(n: usize, f: F) -> Addr<A>
 where
     F: Fn(usize) -> A + Send + Sync + 'static,
-    A: Actor + 'static,
+    A: Actor + Send + 'static,
 {
-    run_n_actor(n, f, |_| {})
+    run_n_actor(n, f, |_| async {})
 }

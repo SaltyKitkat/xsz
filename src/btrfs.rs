@@ -1,4 +1,4 @@
-use std::{fmt::Debug, iter::FusedIterator};
+use std::{fmt::Debug, iter::FusedIterator, os::fd::OwnedFd};
 
 type File = std::fs::File;
 
@@ -312,7 +312,11 @@ impl Sv2Args {
         self.key.init(ino);
     }
 
-    pub fn search_file(&mut self, fd: File, ino: u64) -> rustix::io::Result<Sv2ItemIter> {
+    pub fn search_file(
+        &mut self,
+        fd: OwnedFd,
+        ino: u64,
+    ) -> rustix::io::Result<Sv2ItemIter> {
         self.set_key(ino);
         Sv2ItemIter::new(self, fd)
     }
@@ -320,7 +324,7 @@ impl Sv2Args {
 #[derive(Debug)]
 pub struct Sv2ItemIter<'arg> {
     sv2_arg: &'arg mut Sv2Args,
-    fd: File,
+    fd: OwnedFd,
     pos: usize,
     nrest_item: u32,
     last: bool,
@@ -374,7 +378,7 @@ impl<'arg> Sv2ItemIter<'arg> {
     fn finish(&self) -> bool {
         self.nrest_item == 0 && self.last
     }
-    pub fn new(sv2_arg: &'arg mut Sv2Args, fd: File) -> Result<Self, Errno> {
+    pub fn new(sv2_arg: &'arg mut Sv2Args, fd: OwnedFd) -> Result<Self, Errno> {
         sv2_arg.key.nr_items = u32::MAX;
         sv2_arg.key.min_offset = 0;
         // other fields not reset, maybe wrong?

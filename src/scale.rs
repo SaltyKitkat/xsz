@@ -146,7 +146,7 @@ impl Display for CompsizeStatDisplay<'_> {
             let total_uncomp =
                 stat.prealloc.uncomp + stat.stat.iter().map(|s| s.uncomp).sum::<u64>();
             let total_refd = stat.prealloc.refd + stat.stat.iter().map(|s| s.refd).sum::<u64>();
-            let total_percentage = total_disk * 100 / total_uncomp;
+            let total_percentage = total_disk * 100 / total_uncomp; // bug: div by 0
             // if total_disk == 0 {
             //     if stat.nfile == 0 {
             //         return Err(())
