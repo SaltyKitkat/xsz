@@ -1,10 +1,10 @@
 use std::{
     future::Future,
     marker::Send,
-    sync::{Arc, Weak},
+    sync::Arc,
 };
 
-use async_channel::{unbounded, Receiver, Sender};
+use async_channel::{unbounded, Receiver, Sender, WeakSender};
 use smol::{future::yield_now, spawn};
 
 pub trait Actor {
@@ -29,13 +29,13 @@ pub trait Actor {
 }
 
 pub struct Addr<A: Actor> {
-    sender: Arc<Sender<A::Message>>,
+    sender: Sender<A::Message>,
 }
 
 impl<A: Actor> Clone for Addr<A> {
     fn clone(&self) -> Self {
         Addr {
-            sender: Arc::clone(&self.sender),
+            sender: self.sender.clone(),
         }
     }
 }
@@ -47,7 +47,7 @@ impl<A: Actor> Addr<A> {
 }
 
 pub struct Context<A: Actor> {
-    addr: Weak<Sender<A::Message>>,
+    addr: WeakSender<A::Message>,
 }
 
 // pub struct OnExit<A: Actor>(A::Ret);
@@ -91,7 +91,7 @@ async fn run_actor<A: Actor>(
     receiver: Receiver<A::Message>,
 ) -> <A as Actor>::Ret {
     let mut ctx = Context {
-        addr: Arc::downgrade(&addr.sender),
+        addr: addr.sender.downgrade(),
     };
     actor.on_start(&mut ctx).await;
     yield_now().await;
@@ -111,7 +111,7 @@ where
 {
     let (sender, receiver) = unbounded();
     let addr = Addr {
-        sender: Arc::new(sender),
+        sender,
     };
     {
         let addr = addr.clone();
@@ -133,7 +133,7 @@ where
 {
     let (sender, receiver) = unbounded();
     let addr = Addr {
-        sender: Arc::new(sender),
+        sender,
     };
     let f = Arc::new((f, f_ret));
     (0..n).for_each(|i| {
@@ -155,7 +155,7 @@ where
 pub async fn block_on<A: Actor>(actor: A) -> A::Ret {
     let (sender, receiver) = unbounded();
     let addr = Addr {
-        sender: Arc::new(sender),
+        sender,
     };
     run_actor(addr, actor, receiver).await
 }
