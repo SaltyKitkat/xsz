@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_channel::{unbounded, Receiver, Sender};
-use smol::spawn;
+use smol::{future::yield_now, spawn};
 
 pub trait Actor {
     type Message: Send + 'static;
@@ -44,16 +44,13 @@ impl<A: Actor> Addr<A> {
     pub async fn send(&self, msg: A::Message) -> Result<(), A::Message> {
         self.sender.send(msg).await.map_err(|e| e.0)
     }
-    pub fn send_blocking(&self, msg: A::Message) -> Result<(), A::Message> {
-        self.sender.send_blocking(msg).map_err(|e| e.0)
-    }
 }
 
 pub struct Context<A: Actor> {
     addr: Weak<Sender<A::Message>>,
 }
 
-pub struct OnExit<A: Actor>(A::Ret);
+// pub struct OnExit<A: Actor>(A::Ret);
 
 impl<A: Actor + 'static> Context<A> {
     pub fn addr(&self) -> Option<Addr<A>> {
@@ -97,6 +94,7 @@ async fn run_actor<A: Actor>(
         addr: Arc::downgrade(&addr.sender),
     };
     actor.on_start(&mut ctx).await;
+    yield_now().await;
     // drop the sender here, prevent dead lock lead to actor not stop
     drop(addr);
     while let Ok(msg) = receiver.recv().await {

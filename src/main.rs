@@ -8,19 +8,20 @@ use std::{
     thread::available_parallelism,
 };
 
-use actor::{block_on, Actor, Addr, Context};
+use actor::{block_on, spawn_actor, Actor, Addr, Context};
 use btrfs::{ExtentInfo, Sv2Args};
-use jwalk::{Parallelism, WalkDir};
+// use jwalk::{Parallelism, WalkDir};
 use rustix::fs::{statx, AtFlags, OFlags, StatxFlags};
 use scale::{CompsizeStat, ExtentMap, Scale};
 
 mod actor;
 mod btrfs;
 mod scale;
-// mod walkdir;
+mod walkdir;
 
 use mimalloc::MiMalloc;
 use smol::spawn;
+use walkdir::WalkDir;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -140,32 +141,9 @@ impl Actor for Collector {
         let worker = ctx.spawn_n(nthreads, move |_| Worker::new(addr.clone()));
         spawn(async move {
             let args: Vec<_> = args().skip(1).collect();
-            let mut pak = TaskPak::new(worker);
             for arg in args {
-                let path = Path::new(&arg);
-                if !path.is_dir() {
-                    pak.push(path.into()).await;
-                    continue;
-                }
-                for entry in WalkDir::new(arg)
-                    .sort(false)
-                    .skip_hidden(false)
-                    .follow_links(false)
-                    .parallelism(Parallelism::RayonNewPool(4))
-                    .into_iter()
-                    .filter_map(|e| {
-                        let e = e.ok()?;
-                        if !e.path_is_symlink() && e.file_type().is_file() {
-                            Some(e)
-                        } else {
-                            None
-                        }
-                    })
-                {
-                    pak.push(entry.path().into()).await;
-                }
+                spawn_actor(WalkDir::new(worker.clone(), arg));
             }
-            drop(pak);
         })
         .detach();
     }
@@ -189,7 +167,7 @@ impl Actor for Collector {
 
 struct TaskPak<T, A>
 where
-    A: Actor,
+    A: Actor + 'static,
     Box<[T]>: Into<A::Message>,
 {
     inner: Vec<T>,
@@ -198,7 +176,7 @@ where
 
 impl<T, A> TaskPak<T, A>
 where
-    A: Actor,
+    A: Actor + 'static,
     Box<[T]>: Into<A::Message>,
 {
     const SIZE: usize = 1024 * 32 / size_of::<T>();
@@ -232,14 +210,17 @@ where
 
 impl<T, A> Drop for TaskPak<T, A>
 where
-    A: Actor,
+    A: Actor + 'static,
     Box<[T]>: Into<A::Message>,
 {
     fn drop(&mut self) {
         if !self.is_empty() {
-            self.handler
-                .send_blocking(take(&mut self.inner).into_boxed_slice().into())
-                .ok();
+            let handler = self.handler.clone();
+            let item = take(&mut self.inner).into_boxed_slice().into();
+            spawn(async move {
+                handler.send(item).await.ok();
+            })
+            .detach();
         }
     }
 }
