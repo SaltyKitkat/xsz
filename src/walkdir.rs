@@ -1,87 +1,36 @@
 use std::{
+    collections::VecDeque,
     future::Future,
     io::{self, ErrorKind::NotADirectory},
-    num::NonZero,
     path::{Path, PathBuf},
 };
 
-use crate::{
-    actor::{Actor, Addr, Context},
-    spawn, TaskPak, Worker,
-};
+use crate::actor::{spawn_actor, Actor, Addr, Context};
 
-pub struct WalkDir {
+const MAX_LOCAL_LEN: usize = 2048;
+
+pub trait FileConsumer {
+    fn consume(
+        &mut self,
+        path: Box<Path>,
+    ) -> impl std::future::Future<Output = ()> + std::marker::Send;
+}
+
+pub struct WalkDir<F> {
     root_fs: (),
     nwalker: usize,
-    file_sender: Addr<Worker>,
-    dir_list: Vec<Box<Path>>,
-    __keep_alive: Option<Addr<Self>>,
+    file_handler: F,
+    pending_walkers: Vec<WalkerAddr>,
+    global_dirlist: Vec<Box<Path>>,
 }
 
-impl Actor for WalkDir {
-    type Message = Box<[Box<Path>]>;
-    type Ret = ();
-
-    fn on_start(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = ()> + Send
-    where
-        Self: Sized,
-    {
-        async {
-            let addr = ctx.addr().unwrap();
-            for _ in 0..self.nwalker {
-                if let Some(path) = self.dir_list.pop() {
-                    self.spawn_walker(&addr, path);
-                } else {
-                    break;
-                }
-            }
-            self.__keep_alive = Some(addr)
-        }
-    }
-
-    fn handle(
-        &mut self,
-        ctx: &mut Context<Self>,
-        msg: Self::Message,
-    ) -> impl Future<Output = ()> + Send
-    where
-        Self: Sized,
-    {
-        async {
-            self.dir_list.extend(msg);
-            for _ in self.current_walker()..self.nwalker {
-                if let Some(path) = self.dir_list.pop() {
-                    let addr = self
-                        .__keep_alive
-                        .as_ref()
-                        .expect("we should have addr here");
-                    self.spawn_walker(addr, path);
-                } else {
-                    break;
-                }
-            }
-            let cw = self.current_walker();
-            if self.dir_list.is_empty() && cw == 0 && self.__keep_alive.as_ref().unwrap().is_empty()
-            {
-                self.__keep_alive = None;
-            }
-        }
-    }
-
-    fn on_exit(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = Self::Ret> + Send
-    where
-        Self: Sized,
-    {
-        async {}
-    }
-}
-
-impl WalkDir {
+impl<F> WalkDir<F> {
     pub fn new(
-        file_sender: Addr<Worker>,
+        file_handler: F,
         path: impl Into<PathBuf>,
-        nwalker: NonZero<usize>,
+        nwalker: usize,
     ) -> Result<Self, io::Error> {
+        assert_ne!(nwalker, 0);
         let path = path.into();
         if !path.symlink_metadata().map_or(false, |f| f.is_dir()) {
             return Err(io::Error::new(NotADirectory, path.display().to_string()));
@@ -89,35 +38,155 @@ impl WalkDir {
 
         Ok(Self {
             root_fs: (),
-            nwalker: nwalker.into(),
-            file_sender,
-            dir_list: vec![path.into()],
-            __keep_alive: None,
+            nwalker,
+            file_handler: file_handler,
+            pending_walkers: vec![],
+            global_dirlist: vec![path.into()],
         })
     }
+}
 
-    fn spawn_walker(&self, addr: &Addr<WalkDir>, path: Box<Path>) {
-        let mut dir_pak = TaskPak::new(addr.clone());
-        let mut file_pak = TaskPak::new(self.file_sender.clone());
-        spawn(async move {
-            for entry in path.read_dir()? {
-                let entry = entry?;
-                let fty = entry.file_type()?;
-                let path = entry.path().into_boxed_path();
-                if fty.is_dir() {
-                    dir_pak.push(path).await;
-                } else if fty.is_file() {
-                    file_pak.push(path).await;
-                }
-            }
-            Ok::<_, io::Error>(())
-        });
+pub enum WalkDirMsg {
+    PushJobs(Vec<Box<Path>>),
+    RequireJobs(WalkerAddr),
+}
+
+pub type WalkDirAddr = Addr<WalkDirMsg>;
+
+impl<F, FC> Actor for WalkDir<F>
+where
+    F: FnMut() -> FC + Send + 'static,
+    FC: FileConsumer + Send + 'static,
+{
+    type Message = WalkDirMsg;
+    type Ret = ();
+
+    fn on_start(&mut self, ctx: &mut Context<Self::Message>) -> impl Future<Output = ()> + Send
+    where
+        Self: Sized,
+    {
+        let addr = ctx.take_addr().unwrap();
+        for _ in 0..self.nwalker {
+            let addr = addr.clone();
+            let file_handler = (self.file_handler)();
+            spawn_actor(Walker::new(addr, file_handler));
+        }
+        async {}
     }
 
-    fn current_walker(&self) -> usize {
-        self.__keep_alive
-            .as_ref()
-            .map(|addr| addr.ref_count() - 1) // minus the one hold by self.__keep_alive
-            .unwrap_or_default()
+    fn handle(
+        &mut self,
+        _ctx: &mut Context<Self::Message>,
+        msg: Self::Message,
+    ) -> impl Future<Output = ()> + Send
+    where
+        Self: Sized,
+    {
+        async {
+            match msg {
+                WalkDirMsg::PushJobs(vec) => {
+                    self.global_dirlist.extend(vec);
+                }
+                WalkDirMsg::RequireJobs(addr) => {
+                    self.pending_walkers.push(addr);
+                }
+            }
+            while !self.global_dirlist.is_empty() {
+                if let Some(addr) = self.pending_walkers.pop() {
+                    let l = self.global_dirlist.len().saturating_sub(MAX_LOCAL_LEN / 2);
+                    let dirs = self.global_dirlist.drain(l..).collect();
+                    let addr2 = addr.clone();
+                    addr2.send(WalkerMsg { dirs, addr }).await.ok();
+                } else {
+                    break;
+                }
+            }
+            if self.pending_walkers.len() == self.nwalker {
+                self.pending_walkers.clear();
+            }
+        }
+    }
+
+    fn on_exit(
+        &mut self,
+        _ctx: &mut Context<Self::Message>,
+    ) -> impl Future<Output = Self::Ret> + Send
+    where
+        Self: Sized,
+    {
+        async {}
+    }
+}
+
+struct Walker<F> {
+    master: Addr<WalkDirMsg>,
+    file_handler: F,
+    local_dirlist: Vec<Box<Path>>,
+}
+impl<F> Walker<F> {
+    fn new(addr: Addr<WalkDirMsg>, file_handler: F) -> Self {
+        Self {
+            master: addr,
+            file_handler,
+            local_dirlist: vec![],
+        }
+    }
+}
+
+type WalkerAddr = Addr<WalkerMsg>;
+struct WalkerMsg {
+    dirs: VecDeque<Box<Path>>,
+    addr: Addr<Self>,
+}
+
+impl<F> Actor for Walker<F>
+where
+    F: FileConsumer + Send,
+{
+    type Message = WalkerMsg;
+
+    type Ret = ();
+
+    fn on_start(&mut self, ctx: &mut Context<Self::Message>) -> impl Future<Output = ()> + Send {
+        async {
+            let addr = ctx.take_addr().unwrap();
+            self.master.send(WalkDirMsg::RequireJobs(addr)).await.ok();
+        }
+    }
+
+    fn handle(
+        &mut self,
+        _ctx: &mut Context<Self::Message>,
+        msg: Self::Message,
+    ) -> impl Future<Output = ()> + Send {
+        async {
+            let WalkerMsg { dirs, addr } = msg;
+            self.local_dirlist.extend(dirs);
+            while let Some(dir) = self.local_dirlist.pop() {
+                for entry in dir.read_dir().unwrap() {
+                    let entry = entry.unwrap();
+                    let fty = entry.file_type().unwrap();
+                    let path = entry.path().into_boxed_path();
+                    if fty.is_dir() {
+                        self.local_dirlist.push(path);
+                    } else if fty.is_file() {
+                        self.file_handler.consume(path).await;
+                    }
+                }
+                if self.local_dirlist.len() > MAX_LOCAL_LEN {
+                    let r = self.local_dirlist.len() - MAX_LOCAL_LEN / 2;
+                    let v: Vec<_> = self.local_dirlist.drain(0..r).collect();
+                    self.master.send(WalkDirMsg::PushJobs(v)).await.ok();
+                }
+            }
+            self.master.send(WalkDirMsg::RequireJobs(addr)).await.ok();
+        }
+    }
+
+    fn on_exit(
+        &mut self,
+        _ctx: &mut Context<Self::Message>,
+    ) -> impl Future<Output = Self::Ret> + Send {
+        async {}
     }
 }

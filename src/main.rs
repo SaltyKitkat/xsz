@@ -1,13 +1,12 @@
 use std::{
-    env::{self, args},
+    env::args,
     fs::OpenOptions,
     future::{pending, Future},
     mem::{replace, take},
-    num::NonZero,
     os::unix::fs::OpenOptionsExt as _,
     panic::catch_unwind,
     path::Path,
-    sync::OnceLock,
+    sync::LazyLock,
     thread::{self, available_parallelism},
 };
 
@@ -23,55 +22,57 @@ mod walkdir;
 
 use mimalloc::MiMalloc;
 use smol::Executor;
-use walkdir::WalkDir;
+use walkdir::{FileConsumer, WalkDir};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-fn main() {
-    let nthreads = match available_parallelism() {
-        Ok(n) => n.into(),
-        Err(_) => 4,
-    };
-    // env::set_var("SMOL_THREADS", format!("{}", nthreads));
-    smol::block_on(actor::block_on(Collector::new()));
+fn nthreads() -> usize {
+    static NTHREADS: LazyLock<usize> = LazyLock::new(|| {
+        let nthreads = match available_parallelism() {
+            Ok(n) => n.into(),
+            Err(_) => 4,
+        };
+        nthreads
+    });
+    *NTHREADS
+}
+
+fn global() -> &'static LazyLock<Executor<'static>> {
+    static GLOBAL: LazyLock<Executor<'_>> = LazyLock::new(|| {
+        let num_threads = nthreads();
+
+        for n in 0..num_threads {
+            thread::Builder::new()
+                .name(format!("xsz-worker{}", n))
+                .spawn(|| loop {
+                    catch_unwind(|| smol::block_on(GLOBAL.run(pending::<()>()))).ok();
+                })
+                .expect("cannot spawn executor thread");
+        }
+
+        let ex = Executor::new();
+        ex
+    });
+    &GLOBAL
 }
 
 pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
-    static GLOBAL: OnceLock<Executor<'_>> = OnceLock::new();
-
-    fn global() -> &'static Executor<'static> {
-        GLOBAL.get_or_init(|| {
-            let num_threads = match available_parallelism() {
-                Ok(n) => n.into(),
-                Err(_) => 4,
-            };
-
-            for n in 0..num_threads {
-                thread::Builder::new()
-                    .name(format!("xsz-{}", n))
-                    .spawn(|| loop {
-                        catch_unwind(|| smol::block_on(global().run(pending::<()>()))).ok();
-                    })
-                    .expect("cannot spawn executor thread");
-            }
-
-            let ex = Executor::new();
-            ex
-        })
-    }
-
     global().spawn(future).detach();
+}
+
+fn main() {
+    smol::block_on(actor::block_on(Collector::new()));
 }
 
 struct Worker {
     sv2_args: Sv2Args,
-    collector: TaskPak<ExtentInfo, Collector>,
+    collector: TaskPak<ExtentInfo, CollectorMsg>,
     nfile: u64,
 }
 
 impl Worker {
-    fn new(collector: Addr<Collector>) -> Self {
+    fn new(collector: Addr<CollectorMsg>) -> Self {
         Self {
             sv2_args: Sv2Args::new(),
             collector: TaskPak::new(collector),
@@ -80,13 +81,15 @@ impl Worker {
     }
 }
 
+type WorkerMsg = Box<[Box<Path>]>;
+
 impl Actor for Worker {
-    type Message = Box<[Box<Path>]>;
+    type Message = WorkerMsg;
     type Ret = u64;
 
     fn handle(
         &mut self,
-        ctx: &mut Context<Self>,
+        _ctx: &mut Context<Self::Message>,
         msg: Self::Message,
     ) -> impl Future<Output = ()> + Send {
         async {
@@ -109,7 +112,7 @@ impl Actor for Worker {
                             self.collector.push(extent).await;
                         }
                     }
-                    Err(e) => {
+                    Err(_) => {
                         // if e.raw_os_error() == 25 {
                         //     eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
                         // } else {
@@ -122,7 +125,7 @@ impl Actor for Worker {
         }
     }
 
-    fn on_exit(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = Self::Ret> {
+    fn on_exit(&mut self, _ctx: &mut Context<Self::Message>) -> impl Future<Output = Self::Ret> {
         async { self.nfile }
     }
 }
@@ -161,21 +164,32 @@ impl From<Box<[ExtentInfo]>> for CollectorMsg {
 impl Actor for Collector {
     type Message = CollectorMsg;
     type Ret = ();
-    async fn on_start(&mut self, ctx: &mut Context<Self>) {
-        let nthreads = match available_parallelism() {
-            Ok(n) => n.into(),
-            Err(_) => 4,
-        };
-        let addr = ctx.addr().unwrap();
+    async fn on_start(&mut self, ctx: &mut Context<Self::Message>) {
+        let nthreads = nthreads();
+        let addr = ctx.addr().unwrap().clone();
         let worker = ctx.spawn_n(nthreads, move |_| Worker::new(addr.clone()));
         spawn(async move {
             let args: Vec<_> = args().skip(1).collect();
+            struct F(TaskPak<Box<Path>, WorkerMsg>);
+            impl FileConsumer for F {
+                fn consume(
+                    &mut self,
+                    path: Box<Path>,
+                ) -> impl std::future::Future<Output = ()> + std::marker::Send {
+                    async {
+                        self.0.push(path).await;
+                    }
+                }
+            }
             for arg in args {
-                spawn_actor(WalkDir::new(worker.clone(), arg, NonZero::new(12).unwrap()).unwrap());
+                let worker = worker.clone();
+                let fcb = move || F(TaskPak::new(worker.clone()));
+                spawn_actor(WalkDir::new(fcb, arg, nthreads).unwrap());
             }
         });
+        ctx.take_addr().unwrap();
     }
-    async fn handle(&mut self, ctx: &mut Context<Self>, msg: Self::Message) {
+    async fn handle(&mut self, _ctx: &mut Context<Self::Message>, msg: Self::Message) {
         match msg {
             CollectorMsg::Extent(extents) => {
                 for extent in extents {
@@ -186,29 +200,27 @@ impl Actor for Collector {
         }
     }
 
-    fn on_exit(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = ()> {
-        async {
-            println!("{}", self.stat.display(Scale::Human));
-        }
+    async fn on_exit(&mut self, _ctx: &mut Context<Self::Message>) {
+        println!("{}", self.stat.display(Scale::Human));
     }
 }
 
-struct TaskPak<T, A>
+struct TaskPak<T, M>
 where
-    A: Actor + 'static,
-    Box<[T]>: Into<A::Message>,
+    M: Send + 'static,
+    Box<[T]>: Into<M>,
 {
     inner: Vec<T>,
-    handler: Addr<A>,
+    handler: Addr<M>,
 }
 
-impl<T, A> TaskPak<T, A>
+impl<T, M> TaskPak<T, M>
 where
-    A: Actor + 'static,
-    Box<[T]>: Into<A::Message>,
+    M: Send + 'static,
+    Box<[T]>: Into<M>,
 {
     const SIZE: usize = 1024 * 32 / size_of::<T>();
-    pub fn new(handler: Addr<A>) -> Self {
+    pub fn new(handler: Addr<M>) -> Self {
         Self {
             inner: Vec::with_capacity(Self::SIZE),
             handler,
@@ -236,18 +248,18 @@ where
     }
 }
 
-impl<T, A> Drop for TaskPak<T, A>
+impl<T, M> Drop for TaskPak<T, M>
 where
-    A: Actor + 'static,
-    Box<[T]>: Into<A::Message>,
+    M: Send + 'static,
+    Box<[T]>: Into<M>,
 {
     fn drop(&mut self) {
-        // if !self.is_empty() {
-        let handler = self.handler.clone();
-        let item = take(&mut self.inner).into_boxed_slice().into();
-        spawn(async move {
-            handler.send(item).await.ok();
-        });
-        // }
+        if !self.is_empty() {
+            let handler = self.handler.clone();
+            let item = take(&mut self.inner).into_boxed_slice().into();
+            spawn(async move {
+                handler.send(item).await.ok();
+            });
+        }
     }
 }
