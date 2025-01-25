@@ -1,16 +1,18 @@
 use std::{
     env::{self, args},
     fs::OpenOptions,
-    future::Future,
+    future::{pending, Future},
     mem::{replace, take},
+    num::NonZero,
     os::unix::fs::OpenOptionsExt as _,
+    panic::catch_unwind,
     path::Path,
-    thread::available_parallelism,
+    sync::OnceLock,
+    thread::{self, available_parallelism},
 };
 
-use actor::{block_on, spawn_actor, Actor, Addr, Context};
+use actor::{spawn_actor, Actor, Addr, Context};
 use btrfs::{ExtentInfo, Sv2Args};
-// use jwalk::{Parallelism, WalkDir};
 use rustix::fs::{statx, AtFlags, OFlags, StatxFlags};
 use scale::{CompsizeStat, ExtentMap, Scale};
 
@@ -20,7 +22,7 @@ mod scale;
 mod walkdir;
 
 use mimalloc::MiMalloc;
-use smol::spawn;
+use smol::Executor;
 use walkdir::WalkDir;
 
 #[global_allocator]
@@ -31,8 +33,35 @@ fn main() {
         Ok(n) => n.into(),
         Err(_) => 4,
     };
-    env::set_var("SMOL_THREADS", format!("{}", nthreads));
-    smol::block_on(block_on(Collector::new()));
+    // env::set_var("SMOL_THREADS", format!("{}", nthreads));
+    smol::block_on(actor::block_on(Collector::new()));
+}
+
+pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
+    static GLOBAL: OnceLock<Executor<'_>> = OnceLock::new();
+
+    fn global() -> &'static Executor<'static> {
+        GLOBAL.get_or_init(|| {
+            let num_threads = match available_parallelism() {
+                Ok(n) => n.into(),
+                Err(_) => 4,
+            };
+
+            for n in 0..num_threads {
+                thread::Builder::new()
+                    .name(format!("xsz-{}", n))
+                    .spawn(|| loop {
+                        catch_unwind(|| smol::block_on(global().run(pending::<()>()))).ok();
+                    })
+                    .expect("cannot spawn executor thread");
+            }
+
+            let ex = Executor::new();
+            ex
+        })
+    }
+
+    global().spawn(future).detach();
 }
 
 struct Worker {
@@ -142,10 +171,9 @@ impl Actor for Collector {
         spawn(async move {
             let args: Vec<_> = args().skip(1).collect();
             for arg in args {
-                spawn_actor(WalkDir::new(worker.clone(), arg));
+                spawn_actor(WalkDir::new(worker.clone(), arg, NonZero::new(12).unwrap()).unwrap());
             }
-        })
-        .detach();
+        });
     }
     async fn handle(&mut self, ctx: &mut Context<Self>, msg: Self::Message) {
         match msg {
@@ -214,13 +242,12 @@ where
     Box<[T]>: Into<A::Message>,
 {
     fn drop(&mut self) {
-        if !self.is_empty() {
-            let handler = self.handler.clone();
-            let item = take(&mut self.inner).into_boxed_slice().into();
-            spawn(async move {
-                handler.send(item).await.ok();
-            })
-            .detach();
-        }
+        // if !self.is_empty() {
+        let handler = self.handler.clone();
+        let item = take(&mut self.inner).into_boxed_slice().into();
+        spawn(async move {
+            handler.send(item).await.ok();
+        });
+        // }
     }
 }

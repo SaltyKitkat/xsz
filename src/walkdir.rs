@@ -1,90 +1,123 @@
 use std::{
-    io,
-    path::PathBuf,
+    future::Future,
+    io::{self, ErrorKind::NotADirectory},
+    num::NonZero,
+    path::{Path, PathBuf},
 };
 
 use crate::{
-    actor::{spawn_actor, Actor, Addr},
-    TaskPak, Worker,
+    actor::{Actor, Addr, Context},
+    spawn, TaskPak, Worker,
 };
 
 pub struct WalkDir {
     root_fs: (),
+    nwalker: usize,
     file_sender: Addr<Worker>,
-    dir: PathBuf,
-    dir_list: Vec<PathBuf>,
-    new_dir_list: Vec<PathBuf>,
+    dir_list: Vec<Box<Path>>,
+    __keep_alive: Option<Addr<Self>>,
 }
 
 impl Actor for WalkDir {
-    type Message = ();
+    type Message = Box<[Box<Path>]>;
     type Ret = ();
 
-    fn on_start(
-        &mut self,
-        ctx: &mut crate::actor::Context<Self>,
-    ) -> impl std::future::Future<Output = ()> + Send
-    where
-        Self: Sized,
-    {
-        async {}
-    }
-
-    fn handle(
-        &mut self,
-        ctx: &mut crate::actor::Context<Self>,
-        msg: Self::Message,
-    ) -> impl std::future::Future<Output = ()> + Send
-    where
-        Self: Sized,
-    {
-        async {}
-    }
-
-    fn on_exit(
-        &mut self,
-        ctx: &mut crate::actor::Context<Self>,
-    ) -> impl std::future::Future<Output = Self::Ret> + Send
+    fn on_start(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = ()> + Send
     where
         Self: Sized,
     {
         async {
-            async {
-                let path = &self.dir;
-                if path.symlink_metadata().map_or(false, |f| f.is_dir()) {
-                    let mut pak = TaskPak::new(self.file_sender.clone());
-                    for entry in path.read_dir()? {
-                        let entry = entry?;
-                        let metadata = entry.metadata()?;
-                        let path = entry.path();
-                        if metadata.is_dir() {
-                            spawn_actor(WalkDir::new(self.file_sender.clone(), path));
-                        } else if metadata.is_file() {
-                            pak.push(path.into_boxed_path()).await;
-                        } else {
-                            drop(path);
-                        }
-                    }
+            let addr = ctx.addr().unwrap();
+            for _ in 0..self.nwalker {
+                if let Some(path) = self.dir_list.pop() {
+                    self.spawn_walker(&addr, path);
                 } else {
-                    todo!()
+                    break;
                 }
-                Ok::<_, io::Error>(())
             }
-            .await
-            .ok();
+            self.__keep_alive = Some(addr)
         }
+    }
+
+    fn handle(
+        &mut self,
+        ctx: &mut Context<Self>,
+        msg: Self::Message,
+    ) -> impl Future<Output = ()> + Send
+    where
+        Self: Sized,
+    {
+        async {
+            self.dir_list.extend(msg);
+            for _ in self.current_walker()..self.nwalker {
+                if let Some(path) = self.dir_list.pop() {
+                    let addr = self
+                        .__keep_alive
+                        .as_ref()
+                        .expect("we should have addr here");
+                    self.spawn_walker(addr, path);
+                } else {
+                    break;
+                }
+            }
+            let cw = self.current_walker();
+            if self.dir_list.is_empty() && cw == 0 && self.__keep_alive.as_ref().unwrap().is_empty()
+            {
+                self.__keep_alive = None;
+            }
+        }
+    }
+
+    fn on_exit(&mut self, ctx: &mut Context<Self>) -> impl Future<Output = Self::Ret> + Send
+    where
+        Self: Sized,
+    {
+        async {}
     }
 }
 
 impl WalkDir {
-    pub fn new(file_sender: Addr<Worker>, path: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        file_sender: Addr<Worker>,
+        path: impl Into<PathBuf>,
+        nwalker: NonZero<usize>,
+    ) -> Result<Self, io::Error> {
         let path = path.into();
-        Self {
-            root_fs: (),
-            file_sender,
-            dir: path.clone(),
-            dir_list: vec![path],
-            new_dir_list: vec![],
+        if !path.symlink_metadata().map_or(false, |f| f.is_dir()) {
+            return Err(io::Error::new(NotADirectory, path.display().to_string()));
         }
+
+        Ok(Self {
+            root_fs: (),
+            nwalker: nwalker.into(),
+            file_sender,
+            dir_list: vec![path.into()],
+            __keep_alive: None,
+        })
+    }
+
+    fn spawn_walker(&self, addr: &Addr<WalkDir>, path: Box<Path>) {
+        let mut dir_pak = TaskPak::new(addr.clone());
+        let mut file_pak = TaskPak::new(self.file_sender.clone());
+        spawn(async move {
+            for entry in path.read_dir()? {
+                let entry = entry?;
+                let fty = entry.file_type()?;
+                let path = entry.path().into_boxed_path();
+                if fty.is_dir() {
+                    dir_pak.push(path).await;
+                } else if fty.is_file() {
+                    file_pak.push(path).await;
+                }
+            }
+            Ok::<_, io::Error>(())
+        });
+    }
+
+    fn current_walker(&self) -> usize {
+        self.__keep_alive
+            .as_ref()
+            .map(|addr| addr.ref_count() - 1) // minus the one hold by self.__keep_alive
+            .unwrap_or_default()
     }
 }
