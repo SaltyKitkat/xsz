@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    fmt::{Display, Write},
-};
+use std::{collections::HashSet, fmt::Display, io::Write};
 
 use nohash::BuildNoHashHasher;
 
@@ -52,9 +49,6 @@ pub struct CompsizeStat {
 }
 
 impl CompsizeStat {
-    pub fn display(&self, scale: Scale) -> CompsizeStatDisplay<'_> {
-        CompsizeStatDisplay { stat: self, scale }
-    }
     pub fn nfile(&self) -> u64 {
         self.nfile
     }
@@ -65,11 +59,7 @@ impl CompsizeStat {
         self.nref
     }
 
-    pub fn insert(
-        &mut self,
-        extent_map: &mut ExtentMap,
-        extent: ExtentInfo,
-    ) {
+    pub fn insert(&mut self, extent_map: &mut ExtentMap, extent: ExtentInfo) {
         let comp = extent.comp();
         let stat = extent.stat();
         match extent.r#type() {
@@ -98,26 +88,20 @@ impl CompsizeStat {
                 self.prealloc.refd += stat.refd;
             }
         }
-    }    
-}
+    }
 
-pub struct CompsizeStatDisplay<'a> {
-    stat: &'a CompsizeStat,
-    scale: Scale,
-}
-impl Display for CompsizeStatDisplay<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { stat, scale } = self;
+    // example compsize output format:
+    // Processed 3356969 files, 653492 regular extents (2242077 refs), 2018321 inline.
+    // Type       Perc     Disk Usage   Uncompressed Referenced
+    // TOTAL       78%     100146085502 127182733170 481020538738
+    // none       100%     88797796415  88797796415  364255758399
+    // zstd        29%     11348289087  38384936755  116764780339
+    pub fn fmt(&self, mut f: impl Write, scale: Scale) -> std::io::Result<()> {
         writeln!(
             f,
             "Processed {} files, {} regular extents ({} refs), {} inline.",
-            stat.nfile, stat.nextent, stat.nref, stat.ninline
+            self.nfile, self.nextent, self.nref, self.ninline
         )?;
-        // Processed 3356969 files, 653492 regular extents (2242077 refs), 2018321 inline.
-        // Type       Perc     Disk Usage   Uncompressed Referenced
-        // TOTAL       78%     100146085502 127182733170 481020538738
-        // none       100%     88797796415  88797796415  364255758399
-        // zstd        29%     11348289087  38384936755  116764780339
         fn write_table(
             f: &mut impl Write,
             ty: impl Display,
@@ -125,7 +109,7 @@ impl Display for CompsizeStatDisplay<'_> {
             disk_usage: impl Display,
             uncomp_usage: impl Display,
             refd_usage: impl Display,
-        ) -> std::fmt::Result {
+        ) -> std::io::Result<()> {
             writeln!(
                 f,
                 "{:<10} {:<8} {:<12} {:<12} {:<12}",
@@ -133,7 +117,7 @@ impl Display for CompsizeStatDisplay<'_> {
             )
         }
         write_table(
-            f,
+            &mut f,
             "Type",
             "Perc",
             "Disk Usage",
@@ -142,18 +126,20 @@ impl Display for CompsizeStatDisplay<'_> {
         )?;
         // total
         {
-            let total_disk = stat.prealloc.disk + stat.stat.iter().map(|s| s.disk).sum::<u64>();
+            let total_disk = self.prealloc.disk + self.stat.iter().map(|s| s.disk).sum::<u64>();
             let total_uncomp =
-                stat.prealloc.uncomp + stat.stat.iter().map(|s| s.uncomp).sum::<u64>();
-            let total_refd = stat.prealloc.refd + stat.stat.iter().map(|s| s.refd).sum::<u64>();
-            let total_percentage = total_disk * 100 / total_uncomp; // bug: div by 0
-            // if total_disk == 0 {
-            //     if stat.nfile == 0 {
-            //         return Err(())
-            //     }
-            // }
+                self.prealloc.uncomp + self.stat.iter().map(|s| s.uncomp).sum::<u64>();
+            let total_refd = self.prealloc.refd + self.stat.iter().map(|s| s.refd).sum::<u64>();
+            if total_uncomp == 0 {
+                if self.nfile() == 0 {
+                    eprintln!("No Files.");
+                } else {
+                    eprintln!("All empty or still-delalloced files.");
+                }
+            }
+            let total_percentage = total_disk * 100 / total_uncomp;
             write_table(
-                f,
+                &mut f,
                 "TOTAL",
                 format!("{:>3}%", total_percentage),
                 scale.scale(total_disk),
@@ -161,31 +147,25 @@ impl Display for CompsizeStatDisplay<'_> {
                 scale.scale(total_refd),
             )?;
         }
-        // normal
-        for (i, s0) in stat.stat.iter().enumerate() {
-            if s0.is_empty() {
-                continue;
+        let mut write_stat = |name, s: &ExtentStat| {
+            if !s.is_empty() {
+                write_table(
+                    &mut f,
+                    name,
+                    format!("{:>3}%", s.get_percent()),
+                    scale.scale(s.disk),
+                    scale.scale(s.uncomp),
+                    scale.scale(s.refd),
+                )?;
             }
-            write_table(
-                f,
-                Compression::from_usize(i).name(),
-                format!("{:>3}%", s0.get_percent()),
-                scale.scale(s0.disk),
-                scale.scale(s0.uncomp),
-                scale.scale(s0.refd),
-            )?;
+            Ok::<_, std::io::Error>(())
+        };
+        // normal
+        for (i, s0) in self.stat.iter().enumerate() {
+            write_stat(Compression::from_u8(i as _).name(), s0)?;
         }
         // prealloc
-        if !stat.prealloc.is_empty() {
-            write_table(
-                f,
-                "Prealloc",
-                format!("{:3.0}%", stat.prealloc.get_percent()),
-                scale.scale(stat.prealloc.disk),
-                scale.scale(stat.prealloc.uncomp),
-                scale.scale(stat.prealloc.refd),
-            )?;
-        }
+        write_stat("prealloc", &self.prealloc)?;
         Ok(())
     }
 }

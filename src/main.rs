@@ -2,6 +2,7 @@ use std::{
     env::args,
     fs::OpenOptions,
     future::{pending, Future},
+    io::stdout,
     mem::{replace, take},
     os::unix::fs::OpenOptionsExt as _,
     panic::catch_unwind,
@@ -201,7 +202,8 @@ impl Actor for Collector {
     }
 
     async fn on_exit(&mut self, _ctx: &mut Context<Self::Message>) {
-        println!("{}", self.stat.display(Scale::Human));
+        // println!("{}", self.stat.display(Scale::Human));
+        self.stat.fmt(stdout(), Scale::Human);
     }
 }
 

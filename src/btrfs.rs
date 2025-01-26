@@ -1,6 +1,4 @@
-use std::{fmt::Debug, iter::FusedIterator, os::fd::OwnedFd};
-
-type File = std::fs::File;
+use std::{fmt::Debug, iter::FusedIterator, mem::transmute, os::fd::OwnedFd};
 
 use rustix::{
     io::Errno,
@@ -26,7 +24,7 @@ impl ExtentStat {
         self.refd += rhs.refd;
     }
     pub fn is_empty(&self) -> bool {
-        self.disk == 0 && self.uncomp == 0 && self.refd == 0
+        self.uncomp == 0
     }
     pub fn get_percent(&self) -> u64 {
         self.disk * 100 / self.uncomp
@@ -109,14 +107,10 @@ impl Compression {
     pub fn as_usize(self) -> usize {
         self as usize
     }
-    pub fn from_usize(n: usize) -> Self {
-        match n {
-            0 => Self::None,
-            1 => Self::Zlib,
-            2 => Self::Lzo,
-            3 => Self::Zstd,
-            _ => panic!("Invalid compression type: {}", n),
-        }
+    pub fn from_u8(n: u8) -> Self {
+        assert!(n <= 3);
+        // safety: the assertion checks that `n`` is in valid `Compression` range.
+        unsafe { transmute(n) }
     }
     pub fn name(&self) -> &'static str {
         match self {
@@ -189,11 +183,10 @@ impl IoctlSearchItem {
     }
     pub fn parse(&self) -> Result<Option<ExtentInfo>, String> {
         let hlen = self.header.len;
-        let ram_bytes = self.item.ram_bytes;
-        let comp_type = Compression::from_usize(self.item.compression as _);
+        let uncomp_bytes = self.item.ram_bytes;
+        let comp_type = Compression::from_u8(self.item.compression);
         let extent_type = ExtentType::from_u8(self.item.r#type);
         if extent_type == ExtentType::Inline {
-            const EXTENT_INLINE_HEADER_SIZE: usize = 21;
             let disk_num_bytes = hlen as u64 - EXTENT_INLINE_HEADER_SIZE as u64;
             return Ok(Some(ExtentInfo::new(
                 0,
@@ -201,8 +194,8 @@ impl IoctlSearchItem {
                 comp_type,
                 ExtentStat {
                     disk: disk_num_bytes,
-                    uncomp: ram_bytes,
-                    refd: ram_bytes,
+                    uncomp: uncomp_bytes,
+                    refd: uncomp_bytes,
                 },
             )));
         }
@@ -220,17 +213,18 @@ impl IoctlSearchItem {
             let errmsg = format!("Extent not 4k aligned at ({:#x})", disk_bytenr);
             return Err(errmsg);
         }
+
         let disk_bytenr = disk_bytenr >> 12;
-        let disk_num_bytes = self.item.disk_num_bytes;
-        let num_bytes = self.item.num_bytes;
+        let disk_bytes = self.item.disk_num_bytes;
+        let refd_bytes = self.item.num_bytes;
         Ok(Some(ExtentInfo::new(
             disk_bytenr,
             extent_type,
             comp_type,
             ExtentStat {
-                disk: disk_num_bytes,
-                uncomp: ram_bytes,
-                refd: num_bytes,
+                disk: disk_bytes,
+                uncomp: uncomp_bytes,
+                refd: refd_bytes,
             },
         )))
     }
@@ -312,11 +306,7 @@ impl Sv2Args {
         self.key.init(ino);
     }
 
-    pub fn search_file(
-        &mut self,
-        fd: OwnedFd,
-        ino: u64,
-    ) -> rustix::io::Result<Sv2ItemIter> {
+    pub fn search_file(&mut self, fd: OwnedFd, ino: u64) -> rustix::io::Result<Sv2ItemIter> {
         self.set_key(ino);
         Sv2ItemIter::new(self, fd)
     }
