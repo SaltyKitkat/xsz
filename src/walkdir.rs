@@ -1,13 +1,16 @@
 use std::{
     collections::VecDeque,
     future::Future,
-    io::{self, ErrorKind::NotADirectory},
+    io,
     path::{Path, PathBuf},
 };
 
-use crate::actor::{spawn_actor, Actor, Addr, Context};
+use crate::{
+    actor::{spawn_actor, Actor, Addr, Context},
+    spawn,
+};
 
-const MAX_LOCAL_LEN: usize = 2048;
+const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
 pub trait FileConsumer {
     fn consume(
@@ -19,29 +22,48 @@ pub trait FileConsumer {
 pub struct WalkDir<F> {
     root_fs: (),
     nwalker: usize,
-    file_handler: F,
+    file_consumer: F,
     pending_walkers: Vec<WalkerAddr>,
     global_dirlist: Vec<Box<Path>>,
 }
 
-impl<F> WalkDir<F> {
+impl<F, FC> WalkDir<F>
+where
+    F: FnMut() -> FC + Send + 'static,
+    FC: FileConsumer + Send + 'static,
+{
     pub fn new(
-        file_handler: F,
-        path: impl Into<PathBuf>,
+        mut file_consumer: F,
+        path: impl IntoIterator<Item = impl Into<PathBuf>>,
         nwalker: usize,
     ) -> Result<Self, io::Error> {
         assert_ne!(nwalker, 0);
-        let path = path.into();
-        if !path.symlink_metadata().map_or(false, |f| f.is_dir()) {
-            return Err(io::Error::new(NotADirectory, path.display().to_string()));
-        }
+        let mut files = vec![];
+        let dirs = path
+            .into_iter()
+            .map(|p| p.into().into_boxed_path())
+            .filter_map(|p| {
+                if p.is_file() {
+                    files.push(p);
+                    None
+                } else {
+                    Some(p)
+                }
+            })
+            .collect();
+        let mut cb = file_consumer();
+        spawn(async move {
+            for p in files {
+                cb.consume(p).await;
+            }
+        });
 
         Ok(Self {
             root_fs: (),
             nwalker,
-            file_handler: file_handler,
+            file_consumer,
             pending_walkers: vec![],
-            global_dirlist: vec![path.into()],
+            global_dirlist: dirs,
         })
     }
 }
@@ -68,7 +90,7 @@ where
         let addr = ctx.take_addr().unwrap();
         for _ in 0..self.nwalker {
             let addr = addr.clone();
-            let file_handler = (self.file_handler)();
+            let file_handler = (self.file_consumer)();
             spawn_actor(Walker::new(addr, file_handler));
         }
         async {}

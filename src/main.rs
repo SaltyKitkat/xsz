@@ -182,11 +182,8 @@ impl Actor for Collector {
                     }
                 }
             }
-            for arg in args {
-                let worker = worker.clone();
-                let fcb = move || F(TaskPak::new(worker.clone()));
-                spawn_actor(WalkDir::new(fcb, arg, nthreads).unwrap());
-            }
+            let fcb = move || F(TaskPak::new(worker.clone()));
+            spawn_actor(WalkDir::new(fcb, args, nthreads).unwrap());
         });
         ctx.take_addr().unwrap();
     }
@@ -203,7 +200,7 @@ impl Actor for Collector {
 
     async fn on_exit(&mut self, _ctx: &mut Context<Self::Message>) {
         // println!("{}", self.stat.display(Scale::Human));
-        self.stat.fmt(stdout(), Scale::Human);
+        self.stat.fmt(stdout(), Scale::Human).unwrap();
     }
 }
 
@@ -221,7 +218,7 @@ where
     M: Send + 'static,
     Box<[T]>: Into<M>,
 {
-    const SIZE: usize = 1024 * 32 / size_of::<T>();
+    const SIZE: usize = 1024 * 8 / size_of::<T>();
     pub fn new(handler: Addr<M>) -> Self {
         Self {
             inner: Vec::with_capacity(Self::SIZE),
