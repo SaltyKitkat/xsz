@@ -97,11 +97,6 @@ impl CompsizeStat {
     // none       100%     88797796415  88797796415  364255758399
     // zstd        29%     11348289087  38384936755  116764780339
     pub fn fmt(&self, mut f: impl Write, scale: Scale) -> std::io::Result<()> {
-        writeln!(
-            f,
-            "Processed {} files, {} regular extents ({} refs), {} inline.",
-            self.nfile, self.nextent, self.nref, self.ninline
-        )?;
         fn write_table(
             f: &mut impl Write,
             ty: impl Display,
@@ -116,14 +111,6 @@ impl CompsizeStat {
                 ty, percentage, disk_usage, uncomp_usage, refd_usage
             )
         }
-        write_table(
-            &mut f,
-            "Type",
-            "Perc",
-            "Disk Usage",
-            "Uncompressed",
-            "Referenced",
-        )?;
         // total
         {
             let total_disk = self.prealloc.disk + self.stat.iter().map(|s| s.disk).sum::<u64>();
@@ -136,7 +123,22 @@ impl CompsizeStat {
                 } else {
                     eprintln!("All empty or still-delalloced files.");
                 }
+                return Ok(());
             }
+            writeln!(
+                f,
+                "Processed {} files, {} regular extents ({} refs), {} inline.",
+                self.nfile, self.nextent, self.nref, self.ninline
+            )?;
+            write_table(
+                &mut f,
+                "Type",
+                "Perc",
+                "Disk Usage",
+                "Uncompressed",
+                "Referenced",
+            )?;
+
             let total_percentage = total_disk * 100 / total_uncomp;
             write_table(
                 &mut f,
