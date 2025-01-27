@@ -1,8 +1,12 @@
 use std::{future::Future, marker::Send, sync::Arc};
 
-use async_channel::{unbounded, Receiver, Sender};
+use async_channel::{Receiver, Sender};
 
 use crate::spawn;
+
+fn channel<T>() -> (Sender<T>, Receiver<T>) {
+    async_channel::bounded(8)
+}
 
 pub trait Actor {
     type Message: Send + 'static;
@@ -109,7 +113,7 @@ where
     F: FnOnce(A::Ret) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = channel();
     let addr = Addr { sender };
     {
         let addr = addr.clone();
@@ -128,7 +132,7 @@ where
     FRet: Fn(A::Ret) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = channel();
     let addr = Addr { sender };
     let f = Arc::new((f, f_ret));
     (0..n).for_each(|i| {
@@ -147,7 +151,7 @@ where
 }
 
 pub async fn block_on<A: Actor>(actor: A) -> A::Ret {
-    let (sender, receiver) = unbounded();
+    let (sender, receiver) = channel();
     let addr = Addr { sender };
     run_actor(addr, actor, receiver).await
 }
