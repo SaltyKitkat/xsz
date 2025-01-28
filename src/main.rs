@@ -17,6 +17,7 @@ use rustix::fs::{statx, AtFlags, OFlags, StatxFlags};
 use scale::{CompsizeStat, ExtentMap, Scale};
 
 mod actor;
+mod async_oneshot;
 mod btrfs;
 mod scale;
 mod walkdir;
@@ -113,13 +114,12 @@ impl Actor for Worker {
                             self.collector.push(extent).await;
                         }
                     }
-                    Err(_) => {
-                        // if e.raw_os_error() == 25 {
-                        //     eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
-                        // } else {
-                        //     eprintln!("{}: SEARCH_V2: {}", path.display(), e);
-                        // }
-                        todo!()
+                    Err(e) => {
+                        if e.raw_os_error() == 25 {
+                            eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
+                        } else {
+                            eprintln!("{}: SEARCH_V2: {}", path.display(), e);
+                        }
                     }
                 }
             }
