@@ -12,3 +12,13 @@ parking_lot = "0.12.3"
 replace_with = "0.1.7"
 rustix = {version = "0.38.43", features = ["fs"]}
 smol = "2.0.2"
+
+[profile]
+[profile.dev.package."*"]
+opt-level = "s"
+debug = 0
+[profile.release]
+codegen-units = 1
+debug = 0
+lto = true
+strip = "debuginfo"

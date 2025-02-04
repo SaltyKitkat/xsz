@@ -45,7 +45,7 @@ fn global() -> &'static LazyLock<Executor<'static>> {
     static GLOBAL: LazyLock<Executor<'_>> = LazyLock::new(|| {
         let num_threads = nthreads();
 
-        for n in 0..num_threads + num_threads {
+        for n in 0..num_threads * 2 {
             thread::Builder::new()
                 .name(format!("xsz-worker{}", n))
                 .spawn(|| loop {
