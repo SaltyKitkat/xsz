@@ -1,21 +1,20 @@
 use std::{
     collections::VecDeque,
+    future::Future,
     io,
+    marker::Send,
     path::{Path, PathBuf},
 };
 
 use async_channel::{bounded, Sender};
 use smol::block_on;
 
-use crate::{spawn, Actor};
+use crate::{actor::Runnable as _, spawn, Actor};
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
 pub trait FileConsumer {
-    fn consume(
-        &mut self,
-        path: Box<Path>,
-    ) -> impl std::future::Future<Output = ()> + std::marker::Send;
+    fn consume(&mut self, path: Box<Path>) -> impl Future<Output = ()> + Send;
 }
 
 pub struct WalkDir<F> {
@@ -105,7 +104,7 @@ where
 {
     type Message = WalkDirMsg;
 
-    async fn handle(&mut self, msg: Self::Message) {
+    async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         match msg {
             WalkDirMsg::PushJobs(vec) => {
                 self.global_dirlist.extend(vec);
@@ -115,6 +114,7 @@ where
             }
         }
         self.job_balance().await;
+        Ok(())
     }
 }
 
@@ -133,7 +133,7 @@ impl<F> Walker<F> {
     }
 }
 
-struct WalkerMsg {
+pub struct WalkerMsg {
     dirs: VecDeque<Box<Path>>,
     addr: Sender<Self>,
 }
@@ -144,7 +144,7 @@ where
 {
     type Message = WalkerMsg;
 
-    async fn handle(&mut self, msg: Self::Message) {
+    async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         let WalkerMsg { dirs, addr } = msg;
         self.local_dirlist.extend(dirs);
         while let Some(dir) = self.local_dirlist.pop() {
@@ -161,9 +161,16 @@ where
             if self.local_dirlist.len() > MAX_LOCAL_LEN {
                 let r = self.local_dirlist.len() - MAX_LOCAL_LEN / 2;
                 let v: Vec<_> = self.local_dirlist.drain(0..r).collect();
-                self.master.send(WalkDirMsg::PushJobs(v)).await.ok();
+                self.master
+                    .send(WalkDirMsg::PushJobs(v))
+                    .await
+                    .map_err(|_| ())?;
             }
         }
-        self.master.send(WalkDirMsg::RequireJobs(addr)).await.ok();
+        self.master
+            .send(WalkDirMsg::RequireJobs(addr))
+            .await
+            .map_err(|_| ())?;
+        Ok(())
     }
 }

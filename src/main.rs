@@ -6,24 +6,26 @@ use std::{
     os::unix::fs::OpenOptionsExt as _,
     panic::catch_unwind,
     path::Path,
+    process::exit,
     sync::LazyLock,
     thread::{self, available_parallelism},
 };
 
 use async_channel::{bounded, Sender};
-use btrfs::{ExtentInfo, Sv2Args};
+use mimalloc::MiMalloc;
 use rustix::fs::{statx, AtFlags, OFlags, StatxFlags};
-use scale::{CompsizeStat, ExtentMap, Scale};
+use smol::{block_on, Executor};
 
 mod actor;
 mod btrfs;
+mod global_err;
 mod scale;
 mod taskpak;
 mod walkdir;
 
-use actor::Actor;
-use mimalloc::MiMalloc;
-use smol::{block_on, Executor};
+use actor::{Actor, Runnable as _};
+use btrfs::{ExtentInfo, Sv2Args};
+use scale::{CompsizeStat, ExtentMap, Scale};
 use taskpak::TaskPak;
 use walkdir::{FileConsumer, WalkDir};
 
@@ -70,6 +72,9 @@ fn main() {
     collector.start(&s);
     drop(s);
     block_on(collector.run(r));
+    if global_err::get().is_err() {
+        exit(1)
+    }
 }
 
 struct Worker {
@@ -88,8 +93,12 @@ impl Worker {
 }
 impl Actor for Worker {
     type Message = Box<[Box<Path>]>;
-    async fn handle(&mut self, msg: Self::Message) {
-        for path in msg {
+    async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
+        fn inner<'s>(
+            sv2_args: &'s mut Sv2Args,
+            path: Box<Path>,
+            self_nfile: &mut u64,
+        ) -> Result<btrfs::Sv2ItemIter<'s>, ()> {
             let file = OpenOptions::new()
                 .read(true)
                 .write(false)
@@ -99,12 +108,10 @@ impl Actor for Worker {
             let ino = statx(&file, "", AtFlags::EMPTY_PATH, StatxFlags::INO)
                 .unwrap()
                 .stx_ino;
-            match self.sv2_args.search_file(file.into(), ino) {
+            match sv2_args.search_file(file.into(), ino) {
                 Ok(iter) => {
-                    self.nfile += 1;
-                    for extent in iter.filter_map(|it| it.parse().unwrap()) {
-                        self.collector.push(extent).await;
-                    }
+                    *self_nfile += 1;
+                    return Ok(iter);
                 }
                 Err(e) => {
                     if e.raw_os_error() == 25 {
@@ -112,9 +119,26 @@ impl Actor for Worker {
                     } else {
                         eprintln!("{}: SEARCH_V2: {}", path.display(), e);
                     }
+                    return Err(());
                 }
             }
         }
+        global_err::get()?;
+        for path in msg {
+            let r = inner(&mut self.sv2_args, path, &mut self.nfile);
+            match r {
+                Ok(iter) => {
+                    for extent in iter.filter_map(|it| it.parse().unwrap()) {
+                        self.collector.push(extent).await;
+                    }
+                }
+                Err(_) => {
+                    global_err::set();
+                    return Err(());
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -169,7 +193,7 @@ impl Collector {
 impl Actor for Collector {
     type Message = CollectorMsg;
 
-    async fn handle(&mut self, msg: Self::Message) {
+    async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         match msg {
             CollectorMsg::Extent(extents) => {
                 for extent in extents {
@@ -178,6 +202,7 @@ impl Actor for Collector {
             }
             CollectorMsg::NFile(n) => *self.stat.nfile_mut() += n,
         }
+        Ok(())
     }
 }
 
@@ -187,7 +212,6 @@ impl Drop for Collector {
     }
 }
 
-#[derive(Debug)]
 enum CollectorMsg {
     Extent(Box<[ExtentInfo]>),
     NFile(u64),

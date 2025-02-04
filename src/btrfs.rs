@@ -1,4 +1,9 @@
-use std::{fmt::Debug, iter::FusedIterator, mem::transmute, os::fd::OwnedFd};
+use std::{
+    fmt::{Debug, Display},
+    iter::FusedIterator,
+    mem::transmute,
+    os::fd::OwnedFd,
+};
 
 use rustix::{
     io::Errno,
@@ -18,11 +23,6 @@ pub struct ExtentStat {
     pub refd: u64,
 }
 impl ExtentStat {
-    pub fn merge(&mut self, rhs: Self) {
-        self.disk += rhs.disk;
-        self.uncomp += rhs.uncomp;
-        self.refd += rhs.refd;
-    }
     pub fn is_empty(&self) -> bool {
         self.uncomp == 0
     }
@@ -96,7 +96,7 @@ pub struct IoctlSearchItem {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Compression {
     None = 0,
     Zlib,
@@ -121,6 +121,11 @@ impl Compression {
         }
     }
 }
+impl Display for Compression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ExtentType {
@@ -140,7 +145,7 @@ impl ExtentType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ExtentInfo {
     key: u64,
     r#type: ExtentType,

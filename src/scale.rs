@@ -98,12 +98,12 @@ impl CompsizeStat {
     // zstd        29%     11348289087  38384936755  116764780339
     pub fn fmt(&self, mut f: impl Write, scale: Scale) -> std::io::Result<()> {
         fn write_table(
-            f: &mut impl Write,
-            ty: impl Display,
-            percentage: impl Display,
-            disk_usage: impl Display,
-            uncomp_usage: impl Display,
-            refd_usage: impl Display,
+            mut f: impl Write,
+            ty: &dyn Display,
+            percentage: &dyn Display,
+            disk_usage: &dyn Display,
+            uncomp_usage: &dyn Display,
+            refd_usage: &dyn Display,
         ) -> std::io::Result<()> {
             writeln!(
                 f,
@@ -132,32 +132,32 @@ impl CompsizeStat {
             )?;
             write_table(
                 &mut f,
-                "Type",
-                "Perc",
-                "Disk Usage",
-                "Uncompressed",
-                "Referenced",
+                &"Type",
+                &"Perc",
+                &"Disk Usage",
+                &"Uncompressed",
+                &"Referenced",
             )?;
 
             let total_percentage = total_disk * 100 / total_uncomp;
             write_table(
                 &mut f,
-                "TOTAL",
-                format!("{:>3}%", total_percentage),
-                scale.scale(total_disk),
-                scale.scale(total_uncomp),
-                scale.scale(total_refd),
+                &"TOTAL",
+                &format!("{:>3}%", total_percentage),
+                &scale.scale(total_disk),
+                &scale.scale(total_uncomp),
+                &scale.scale(total_refd),
             )?;
         }
         let mut write_stat = |name, s: &ExtentStat| {
             if !s.is_empty() {
                 write_table(
                     &mut f,
-                    name,
-                    format!("{:>3}%", s.get_percent()),
-                    scale.scale(s.disk),
-                    scale.scale(s.uncomp),
-                    scale.scale(s.refd),
+                    &name,
+                    &format!("{:>3}%", s.get_percent()),
+                    &scale.scale(s.disk),
+                    &scale.scale(s.uncomp),
+                    &scale.scale(s.refd),
                 )?;
             }
             Ok::<_, std::io::Error>(())
