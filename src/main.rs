@@ -1,23 +1,16 @@
 use std::{
-    env::args,
-    fs::OpenOptions,
-    future::{pending, Future},
-    io::stdout,
-    os::unix::fs::OpenOptionsExt as _,
-    panic::catch_unwind,
-    path::Path,
-    process::exit,
-    sync::LazyLock,
-    thread::{self, available_parallelism},
+    env::args, fs::OpenOptions, future::Future, io::stdout, os::unix::fs::OpenOptionsExt as _,
+    path::Path, process::exit, sync::LazyLock, thread::available_parallelism,
 };
 
 use async_channel::{bounded, Sender};
+use futures_lite::future::block_on;
 use mimalloc::MiMalloc;
 use rustix::fs::{statx, AtFlags, OFlags, StatxFlags};
-use smol::{block_on, Executor};
 
 mod actor;
 mod btrfs;
+mod executor;
 mod global_err;
 mod scale;
 mod taskpak;
@@ -43,27 +36,8 @@ fn nthreads() -> usize {
     *NTHREADS
 }
 
-fn global() -> &'static LazyLock<Executor<'static>> {
-    static GLOBAL: LazyLock<Executor<'_>> = LazyLock::new(|| {
-        let num_threads = nthreads();
-
-        for n in 0..num_threads * 2 {
-            thread::Builder::new()
-                .name(format!("xsz-worker{}", n))
-                .spawn(|| loop {
-                    catch_unwind(|| smol::block_on(GLOBAL.run(pending::<()>()))).ok();
-                })
-                .expect("cannot spawn executor thread");
-        }
-
-        let ex = Executor::new();
-        ex
-    });
-    &GLOBAL
-}
-
 pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
-    global().spawn(future).detach();
+    executor::spawn(future).detach();
 }
 
 fn main() {
@@ -114,6 +88,7 @@ impl Actor for Worker {
                     return Ok(iter);
                 }
                 Err(e) => {
+                    global_err::set()?;
                     if e.raw_os_error() == 25 {
                         eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
                     } else {
@@ -123,19 +98,11 @@ impl Actor for Worker {
                 }
             }
         }
-        global_err::get()?;
         for path in msg {
-            let r = inner(&mut self.sv2_args, path, &mut self.nfile);
-            match r {
-                Ok(iter) => {
-                    for extent in iter.filter_map(|it| it.parse().unwrap()) {
-                        self.collector.push(extent).await;
-                    }
-                }
-                Err(_) => {
-                    global_err::set();
-                    return Err(());
-                }
+            global_err::get()?;
+            let iter = inner(&mut self.sv2_args, path, &mut self.nfile)?;
+            for extent in iter.filter_map(|it| it.parse().unwrap()) {
+                self.collector.push(extent).await;
             }
         }
         Ok(())

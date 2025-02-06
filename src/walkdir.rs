@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_channel::{bounded, Sender};
-use smol::block_on;
+use futures_lite::future::block_on;
 
 use crate::{actor::Runnable as _, spawn, Actor};
 

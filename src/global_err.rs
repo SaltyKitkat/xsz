@@ -13,6 +13,9 @@ pub fn get() -> Result<(), ()> {
     }
 }
 
-pub fn set() {
-    global_err().store(true, Ordering::Relaxed);
+pub fn set() -> Result<(), ()> {
+    match global_err().compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(()),
+    }
 }
