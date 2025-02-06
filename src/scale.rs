@@ -7,6 +7,7 @@ use crate::btrfs::{Compression, ExtentInfo, ExtentStat, ExtentType};
 const UNITS: &[u8; 7] = b"BKMGTPE";
 pub type ExtentMap = HashSet<u64, BuildNoHashHasher<u64>>;
 
+#[derive(Clone, Copy)]
 pub enum Scale {
     Bytes,
     Human,
@@ -14,7 +15,7 @@ pub enum Scale {
 impl Scale {
     pub fn scale(&self, num: u64) -> String {
         match self {
-            Scale::Bytes => return format!("{}B", num),
+            Scale::Bytes => return format!("{}", num),
             Scale::Human => {
                 let base = 1024;
                 let mut num = num;

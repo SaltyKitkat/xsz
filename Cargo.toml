@@ -5,13 +5,12 @@ edition = "2021"
 
 [dependencies]
 async-channel = "2.3.1"
-crossbeam = "0.8.4"
+async-task = "4.7.1"
+futures-lite = "2.6.0"
+just-getopt = "1.2.0"
 mimalloc = "0.1.43"
 nohash = "0.2.0"
-parking_lot = "0.12.3"
-replace_with = "0.1.7"
 rustix = {version = "0.38.43", features = ["fs"]}
-smol = "2.0.2"
 
 [profile]
 [profile.dev.package."*"]

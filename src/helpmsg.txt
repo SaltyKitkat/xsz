@@ -1,0 +1,10 @@
+Usage: xsz [options] file-or-dir1 [file-or-dir2 ...]
+
+xsz displays total space used by set of files, taking into account
+compression, reflinks, partially overwritten extents.
+
+Options:
+    -h, --help              print this help message and exit
+    -b, --bytes             display raw bytes instead of human-readable sizes
+    -x, --one-file-system   don't cross filesystem boundaries
+
