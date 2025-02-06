@@ -41,11 +41,11 @@ where
             .into_iter()
             .map(|p| p.into().into_boxed_path())
             .filter_map(|p| {
-                if p.is_file() {
+                if p.is_dir() {
+                    Some(p)
+                } else {
                     files.push(p);
                     None
-                } else {
-                    Some(p)
                 }
             })
             .collect();
@@ -121,20 +121,18 @@ where
 struct Walker<F> {
     master: Sender<WalkDirMsg>,
     file_handler: F,
-    local_dirlist: Vec<Box<Path>>,
 }
 impl<F> Walker<F> {
     fn new(addr: Sender<WalkDirMsg>, file_handler: F) -> Self {
         Self {
             master: addr,
             file_handler,
-            local_dirlist: vec![],
         }
     }
 }
 
 pub struct WalkerMsg {
-    dirs: VecDeque<Box<Path>>,
+    dirs: Vec<Box<Path>>,
     addr: Sender<Self>,
 }
 
@@ -146,21 +144,21 @@ where
 
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         let WalkerMsg { dirs, addr } = msg;
-        self.local_dirlist.extend(dirs);
-        while let Some(dir) = self.local_dirlist.pop() {
+        let mut dirs = VecDeque::from(dirs);
+        while let Some(dir) = dirs.pop_back() {
             for entry in dir.read_dir().unwrap() {
                 let entry = entry.unwrap();
                 let fty = entry.file_type().unwrap();
                 let path = entry.path().into_boxed_path();
                 if fty.is_dir() {
-                    self.local_dirlist.push(path);
+                    dirs.push_back(path);
                 } else if fty.is_file() {
                     self.file_handler.consume(path).await;
                 }
             }
-            if self.local_dirlist.len() > MAX_LOCAL_LEN {
-                let r = self.local_dirlist.len() - MAX_LOCAL_LEN / 2;
-                let v: Vec<_> = self.local_dirlist.drain(0..r).collect();
+            if dirs.len() > MAX_LOCAL_LEN {
+                let r = dirs.len() - MAX_LOCAL_LEN / 2;
+                let v: Vec<_> = dirs.drain(0..r).collect();
                 self.master
                     .send(WalkDirMsg::PushJobs(v))
                     .await
