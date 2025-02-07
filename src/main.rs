@@ -19,13 +19,14 @@ use rustix::fs::OFlags;
 mod actor;
 mod btrfs;
 mod executor;
-mod global_err;
+mod global;
 mod scale;
 mod taskpak;
 mod walkdir;
 
 use actor::{Actor, Runnable as _};
 use btrfs::{ExtentInfo, Sv2Args};
+use global::{get_err, set_err, set_one_fs};
 use scale::{CompsizeStat, ExtentMap, Scale};
 use taskpak::TaskPak;
 use walkdir::{FileConsumer, WalkDir};
@@ -71,7 +72,7 @@ fn main() {
     for opt in opt.options {
         match opt.id.as_str() {
             "b" => scale = Scale::Bytes,
-            "x" => todo!(),
+            "x" => set_one_fs(),
             "h" => {
                 print_help();
                 exit(0)
@@ -84,7 +85,7 @@ fn main() {
     collector.start(&s, opt.other);
     drop(s);
     block_on(collector.run(r));
-    if global_err::get().is_err() {
+    if get_err().is_err() {
         exit(1)
     }
 }
@@ -124,7 +125,6 @@ impl Actor for Worker {
                 }
             };
             let stat = file.metadata().unwrap();
-            let dev = stat.st_dev();
             let ino = stat.st_ino();
             match sv2_args.search_file(file.into(), ino) {
                 Ok(iter) => {
@@ -132,7 +132,7 @@ impl Actor for Worker {
                     return Ok(iter);
                 }
                 Err(e) => {
-                    global_err::set()?;
+                    set_err()?;
                     if e.raw_os_error() == 25 {
                         eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
                     } else {
@@ -143,7 +143,7 @@ impl Actor for Worker {
             }
         }
         for path in msg {
-            global_err::get()?;
+            get_err()?;
             let Ok(iter) = inner(&mut self.sv2_args, path, &mut self.nfile) else {
                 continue;
             };
