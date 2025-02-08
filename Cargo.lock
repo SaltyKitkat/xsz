@@ -114,9 +114,9 @@ dependencies = [
 
 [[package]]
 name = "just-getopt"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "049706d58c99978d1c67fcc106443f1824348afcccb052b48b1ace34fe216204"
+checksum = "a61c096131f8b03d9ee4fb7e9eb7a184163fffb182b4907a3a71004b75a3330e"
 
 [[package]]
 name = "libc"

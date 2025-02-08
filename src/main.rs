@@ -3,7 +3,7 @@ use std::{
     fs::OpenOptions,
     future::Future,
     io::stdout,
-    os::{linux::fs::MetadataExt, unix::fs::OpenOptionsExt as _},
+    os::unix::fs::OpenOptionsExt as _,
     path::{Path, PathBuf},
     process::exit,
     sync::LazyLock,
@@ -19,6 +19,7 @@ use rustix::fs::OFlags;
 mod actor;
 mod btrfs;
 mod executor;
+mod fs_util;
 mod global;
 mod scale;
 mod taskpak;
@@ -35,13 +36,8 @@ use walkdir::{FileConsumer, WalkDir};
 static GLOBAL: MiMalloc = MiMalloc;
 
 fn nthreads() -> usize {
-    static NTHREADS: LazyLock<usize> = LazyLock::new(|| {
-        let nthreads = match available_parallelism() {
-            Ok(n) => n.into(),
-            Err(_) => 4,
-        };
-        nthreads
-    });
+    static NTHREADS: LazyLock<usize> =
+        LazyLock::new(|| available_parallelism().map(|n| n.get()).unwrap_or(4));
     *NTHREADS
 }
 
@@ -124,12 +120,11 @@ impl Actor for Worker {
                     return Err(());
                 }
             };
-            let stat = file.metadata().unwrap();
-            let ino = stat.st_ino();
+            let ino = fs_util::get_ino(&file);
             match sv2_args.search_file(file.into(), ino) {
                 Ok(iter) => {
                     *self_nfile += 1;
-                    return Ok(iter);
+                    Ok(iter)
                 }
                 Err(e) => {
                     set_err()?;
@@ -138,17 +133,20 @@ impl Actor for Worker {
                     } else {
                         eprintln!("{}: SEARCH_V2: {}", path.display(), e);
                     }
-                    return Err(());
+                    Err(())
                 }
             }
         }
+
         for path in msg {
             get_err()?;
             let Ok(iter) = inner(&mut self.sv2_args, path, &mut self.nfile) else {
                 continue;
             };
-            for extent in iter.filter_map(|it| it.parse().unwrap()) {
-                self.collector.push(extent).await;
+            for extent in iter {
+                if let Ok(Some(extent)) = extent.parse() {
+                    self.collector.push(extent).await;
+                }
             }
         }
         Ok(())

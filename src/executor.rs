@@ -14,14 +14,15 @@ impl Executor {
         let (sender, receiver) = unbounded::<Runnable>();
         for i in 0..nthreads {
             let receiver = receiver.clone();
-            Builder::new()
+            if let Err(e) = Builder::new()
                 .name(format!("xsz-worker{}", i))
                 .spawn(move || {
                     while let Ok(r) = receiver.recv_blocking() {
                         r.run();
                     }
-                })
-                .unwrap();
+                }) {
+                eprintln!("Failed to spawn worker thread: {}", e);
+            }
         }
         Self { sender }
     }

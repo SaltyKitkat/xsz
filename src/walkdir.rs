@@ -3,7 +3,6 @@ use std::{
     future::Future,
     io,
     marker::Send,
-    os::linux::fs::MetadataExt as _,
     path::{Path, PathBuf},
 };
 
@@ -11,7 +10,7 @@ use async_channel::{bounded, Sender};
 use futures_lite::future::block_on;
 use nohash::BuildNoHashHasher;
 
-use crate::{actor::Runnable as _, global::get_one_fs, spawn, Actor};
+use crate::{actor::Runnable as _, fs_util, global::get_one_fs, spawn, Actor};
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
@@ -27,7 +26,7 @@ pub struct JobChunk {
 impl JobChunk {
     fn from_path(path: impl Into<Box<Path>>) -> Result<Self, io::Error> {
         let path: Box<Path> = path.into();
-        let dev = path.symlink_metadata()?.st_dev();
+        let dev = fs_util::get_dev(&path);
         Ok(Self {
             dev,
             dirs: vec![path.into()],
@@ -205,16 +204,32 @@ where
         } = msg;
         let mut dirs = VecDeque::from(dirs);
         while let Some(dir) = dirs.pop_back() {
-            for entry in dir.read_dir().unwrap() {
-                let entry = entry.unwrap();
-                if get_one_fs() && entry.metadata().unwrap().st_dev() != dev {
+            let read_dir = match dir.read_dir() {
+                Ok(rd) => rd,
+                Err(e) => {
+                    eprintln!("{}: {}", dir.display(), e);
                     continue;
                 }
-                let fty = entry.file_type().unwrap();
+            };
+
+            for entry in read_dir {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        eprintln!("{}: {}", dir.display(), e);
+                        continue;
+                    }
+                };
+                if get_one_fs() && fs_util::get_dev(&entry.path()) != dev {
+                    continue;
+                }
+
+                let file_type = entry.file_type().unwrap();
                 let path = entry.path().into_boxed_path();
-                if fty.is_dir() {
+
+                if file_type.is_dir() {
                     dirs.push_back(path);
-                } else if fty.is_file() {
+                } else if file_type.is_file() {
                     self.file_handler.consume(path).await;
                 }
             }
