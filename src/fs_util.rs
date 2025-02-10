@@ -1,7 +1,8 @@
-use rustix::fs::{makedev, statx, AtFlags, StatxFlags, CWD};
+use rustix::fs::{fstat, lstat, makedev, statx, AtFlags, StatxFlags, CWD};
 use std::{os::fd::AsFd, path::Path};
 
 pub(crate) fn get_dev(path: impl AsRef<Path>) -> u64 {
+    // lstat(path.as_ref()).unwrap().st_dev
     let stx = statx(
         CWD,
         path.as_ref(),
@@ -15,7 +16,5 @@ pub(crate) fn get_dev(path: impl AsRef<Path>) -> u64 {
 }
 
 pub(crate) fn get_ino(file: impl AsFd) -> u64 {
-    statx(file, "", AtFlags::EMPTY_PATH, StatxFlags::INO)
-        .unwrap()
-        .stx_ino
+    fstat(file).unwrap().st_ino
 }

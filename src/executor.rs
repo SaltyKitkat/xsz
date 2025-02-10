@@ -3,7 +3,7 @@ use std::{future::Future, sync::LazyLock, thread::Builder};
 use async_channel::{unbounded, Sender};
 use async_task::{Runnable, Task};
 
-use crate::nthreads;
+use crate::global::config;
 
 pub struct Executor {
     sender: Sender<Runnable>,
@@ -16,11 +16,13 @@ impl Executor {
             let receiver = receiver.clone();
             if let Err(e) = Builder::new()
                 .name(format!("xsz-worker{}", i))
+                .stack_size(16 * 1024)
                 .spawn(move || {
                     while let Ok(r) = receiver.recv_blocking() {
                         r.run();
                     }
-                }) {
+                })
+            {
                 eprintln!("Failed to spawn worker thread: {}", e);
             }
         }
@@ -32,7 +34,7 @@ impl Executor {
 }
 
 pub fn global() -> &'static Executor {
-    static EXECUTOR: LazyLock<Executor> = LazyLock::new(|| Executor::new(nthreads() + 2));
+    static EXECUTOR: LazyLock<Executor> = LazyLock::new(|| Executor::new(config().jobs));
     &EXECUTOR
 }
 

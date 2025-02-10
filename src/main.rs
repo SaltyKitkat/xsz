@@ -1,18 +1,14 @@
 use std::{
-    env::args,
     fs::OpenOptions,
     future::Future,
     io::stdout,
     os::unix::fs::OpenOptionsExt as _,
     path::{Path, PathBuf},
     process::exit,
-    sync::LazyLock,
-    thread::available_parallelism,
 };
 
 use async_channel::{bounded, Sender};
 use futures_lite::future::block_on;
-use just_getopt::{OptFlags, OptSpecs, OptValueType};
 use mimalloc::MiMalloc;
 use rustix::fs::OFlags;
 
@@ -27,7 +23,7 @@ mod walkdir;
 
 use actor::{Actor, Runnable as _};
 use btrfs::{ExtentInfo, Sv2Args};
-use global::{get_err, set_err, set_one_fs};
+use global::{config, get_err, set_err};
 use scale::{CompsizeStat, ExtentMap, Scale};
 use taskpak::TaskPak;
 use walkdir::{FileConsumer, WalkDir};
@@ -35,50 +31,20 @@ use walkdir::{FileConsumer, WalkDir};
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-fn nthreads() -> usize {
-    static NTHREADS: LazyLock<usize> =
-        LazyLock::new(|| available_parallelism().map(|n| n.get()).unwrap_or(4));
-    *NTHREADS
-}
-
 pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
     executor::spawn(future).detach();
 }
 
-fn print_help() {
-    const HELP_MSG: &str = include_str!("./helpmsg.txt");
-    eprint!("{}", HELP_MSG);
-}
-
 fn main() {
-    let opt_spec = OptSpecs::new()
-        .flag(OptFlags::OptionsEverywhere)
-        .option("b", "b", OptValueType::None)
-        .option("b", "bytes", OptValueType::None)
-        .option("x", "x", OptValueType::None)
-        .option("x", "one-file-system", OptValueType::None)
-        .option("h", "h", OptValueType::None)
-        .option("h", "help", OptValueType::None);
-    let opt = opt_spec.getopt(args().skip(1));
-    if let Some(unknown_arg) = opt.unknown.first() {
-        eprintln!("xsz: unrecognized option '--{}'", unknown_arg);
-        exit(1);
-    }
-    let mut scale = Scale::Human;
-    for opt in opt.options {
-        match opt.id.as_str() {
-            "b" => scale = Scale::Bytes,
-            "x" => set_one_fs(),
-            "h" => {
-                print_help();
-                exit(0)
-            }
-            _ => unreachable!(),
-        }
-    }
+    let cfg = config();
+    let scale = if cfg.bytes {
+        Scale::Bytes
+    } else {
+        Scale::Human
+    };
     let collector = Collector::new(scale);
     let (s, r) = bounded(32);
-    collector.start(&s, opt.other);
+    collector.start(&s, &cfg.args);
     drop(s);
     block_on(collector.run(r));
     if get_err().is_err() {
@@ -181,7 +147,7 @@ impl Collector {
         sender: &Sender<CollectorMsg>,
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
     ) {
-        let nthreads = nthreads();
+        let nthreads = config().jobs;
         let (worker, r_worker) = bounded(nthreads * 2);
         for _ in 0..nthreads {
             let worker = Worker::new(sender.clone());

@@ -1,16 +1,20 @@
 use std::{
+    borrow::Borrow,
     collections::{hash_map::Entry, HashMap, VecDeque},
+    fs::OpenOptions,
     future::Future,
     io,
     marker::Send,
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 
 use async_channel::{bounded, Sender};
 use futures_lite::future::block_on;
 use nohash::BuildNoHashHasher;
+use rustix::fs::{open, Dir, Mode, OFlags};
 
-use crate::{actor::Runnable as _, fs_util, global::get_one_fs, spawn, Actor};
+use crate::{actor::Runnable as _, fs_util, global::config, spawn, Actor};
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
@@ -204,6 +208,9 @@ where
         } = msg;
         let mut dirs = VecDeque::from(dirs);
         while let Some(dir) = dirs.pop_back() {
+            if config().one_fs && fs_util::get_dev(&dir) != dev {
+                continue;
+            }
             let read_dir = match dir.read_dir() {
                 Ok(rd) => rd,
                 Err(e) => {
@@ -220,9 +227,6 @@ where
                         continue;
                     }
                 };
-                if get_one_fs() && fs_util::get_dev(&entry.path()) != dev {
-                    continue;
-                }
 
                 let file_type = entry.file_type().unwrap();
                 let path = entry.path().into_boxed_path();

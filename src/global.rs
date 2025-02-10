@@ -1,15 +1,87 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    env::args,
+    process::exit,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        LazyLock,
+    },
+    thread::available_parallelism,
+};
 
+use just_getopt::{OptFlags, OptSpecs, OptValueType};
+
+fn print_help() {
+    const HELP_MSG: &str = include_str!("./helpmsg.txt");
+    eprint!("{}", HELP_MSG);
+}
+
+fn nthreads() -> usize {
+    static NTHREADS: LazyLock<usize> =
+        LazyLock::new(|| available_parallelism().map(|n| n.get()).unwrap_or(4));
+    *NTHREADS
+}
+
+pub struct Config {
+    pub one_fs: bool,
+    pub bytes: bool,
+    pub jobs: usize,
+    pub args: Box<[String]>,
+}
+impl Config {
+    fn from_args() -> Self {
+        let opt_spec = OptSpecs::new()
+            .flag(OptFlags::OptionsEverywhere)
+            .option("b", "b", OptValueType::None)
+            .option("b", "bytes", OptValueType::None)
+            .option("x", "x", OptValueType::None)
+            .option("x", "one-file-system", OptValueType::None)
+            .option("h", "h", OptValueType::None)
+            .option("h", "help", OptValueType::None)
+            .option("j", "j", OptValueType::Required)
+            .option("j", "jobs", OptValueType::Required);
+        let opt = opt_spec.getopt(args().skip(1));
+        if let Some(unknown_arg) = opt.unknown.first() {
+            eprintln!("xsz: unrecognized option '--{}'", unknown_arg);
+            exit(1);
+        }
+        let mut one_fs = false;
+        let mut bytes = false;
+        let mut jobs = nthreads() + 2;
+        for opt in opt.options {
+            match opt.id.as_str() {
+                "b" => bytes = true,
+                "x" => one_fs = true,
+                "j" => {
+                    jobs = opt
+                        .value
+                        .and_then(|n| n.parse().ok())
+                        .expect("-j requires an integer option");
+                }
+                "h" => {
+                    print_help();
+                    exit(0)
+                }
+                _ => unreachable!(),
+            }
+        }
+        Self {
+            one_fs,
+            bytes,
+            jobs,
+            args: opt.other.into_boxed_slice(),
+        }
+    }
+}
 struct Global {
     err: AtomicBool,
-    one_fs: AtomicBool,
+    config: LazyLock<Config>,
 }
 
 impl Global {
     const fn new() -> Self {
         let err = AtomicBool::new(false);
-        let one_fs = AtomicBool::new(false);
-        Self { err, one_fs }
+        let config: LazyLock<Config> = LazyLock::new(|| Config::from_args());
+        Self { err, config }
     }
 }
 
@@ -37,14 +109,6 @@ pub fn set_err() -> Result<(), ()> {
     }
 }
 
-fn one_fs() -> &'static AtomicBool {
-    &global().one_fs
-}
-
-pub fn set_one_fs() {
-    one_fs().store(true, Ordering::Relaxed);
-}
-
-pub fn get_one_fs() -> bool {
-    one_fs().load(Ordering::Relaxed)
+pub fn config() -> &'static Config {
+    &global().config
 }
