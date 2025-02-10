@@ -8,6 +8,7 @@ use std::{
 };
 
 use async_channel::{bounded, Sender};
+use fs_util::get_ino;
 use futures_lite::future::block_on;
 use mimalloc::MiMalloc;
 use rustix::fs::OFlags;
@@ -86,7 +87,7 @@ impl Actor for Worker {
                     return Err(());
                 }
             };
-            let ino = fs_util::get_ino(&file);
+            let ino = get_ino(&file);
             match sv2_args.search_file(file.into(), ino) {
                 Ok(iter) => {
                     *self_nfile += 1;

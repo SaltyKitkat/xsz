@@ -1,20 +1,16 @@
 use std::{
-    borrow::Borrow,
     collections::{hash_map::Entry, HashMap, VecDeque},
-    fs::OpenOptions,
     future::Future,
     io,
     marker::Send,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 
 use async_channel::{bounded, Sender};
 use futures_lite::future::block_on;
 use nohash::BuildNoHashHasher;
-use rustix::fs::{open, Dir, Mode, OFlags};
 
-use crate::{actor::Runnable as _, fs_util, global::config, spawn, Actor};
+use crate::{actor::Runnable as _, fs_util::get_dev, global::config, spawn, Actor};
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
@@ -30,7 +26,7 @@ pub struct JobChunk {
 impl JobChunk {
     fn from_path(path: impl Into<Box<Path>>) -> Result<Self, io::Error> {
         let path: Box<Path> = path.into();
-        let dev = fs_util::get_dev(&path);
+        let dev = get_dev(&path);
         Ok(Self {
             dev,
             dirs: vec![path.into()],
@@ -208,7 +204,7 @@ where
         } = msg;
         let mut dirs = VecDeque::from(dirs);
         while let Some(dir) = dirs.pop_back() {
-            if config().one_fs && fs_util::get_dev(&dir) != dev {
+            if config().one_fs && get_dev(&dir) != dev {
                 continue;
             }
             let read_dir = match dir.read_dir() {
