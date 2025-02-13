@@ -3,7 +3,7 @@
 ## Introduction
 
 xsz is an open-source tool designed to measure the used compression types and effective compression ratios of files on a Btrfs filesystem,
-producing a comprehensive report. It is inspired by compsize and maintains compatibility with its command-line interface.
+producing a comprehensive report. It is inspired by [compsize](https://github.com/kilobyte/compsize) and maintains compatibility with its command-line interface.
 However, xsz goes a step further by leveraging multi-threading to significantly enhance performance,
 especially on NVMe SSDs, while also providing notable speed improvements on other hardware.
 
