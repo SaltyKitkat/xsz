@@ -41,7 +41,11 @@ impl Config {
             .option("j", "jobs", OptValueType::Required);
         let opt = opt_spec.getopt(args().skip(1));
         if let Some(unknown_arg) = opt.unknown.first() {
-            eprintln!("xsz: unrecognized option '--{}'", unknown_arg);
+            if unknown_arg.len() > 1 {
+                eprintln!("xsz: unrecognized option '--{}'", unknown_arg);
+            } else {
+                eprintln!("xsz: invalid option -- '{}'", unknown_arg);
+            }
             exit(1);
         }
         let mut one_fs = false;
@@ -52,10 +56,11 @@ impl Config {
                 "b" => bytes = true,
                 "x" => one_fs = true,
                 "j" => {
-                    jobs = opt
-                        .value
-                        .and_then(|n| n.parse().ok())
-                        .expect("-j requires an integer option");
+                    let Some(arg_jobs) = opt.value.and_then(|n| n.parse().ok()) else {
+                        eprintln!("-j requires an integer option");
+                        exit(1)
+                    };
+                    jobs = arg_jobs;
                 }
                 "h" => {
                     print_help();
@@ -64,11 +69,16 @@ impl Config {
                 _ => unreachable!(),
             }
         }
+        let args = opt.other.into_boxed_slice();
+        if args.is_empty() {
+            print_help();
+            exit(1);
+        }
         Self {
             one_fs,
             bytes,
             jobs,
-            args: opt.other.into_boxed_slice(),
+            args,
         }
     }
 }
