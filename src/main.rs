@@ -191,7 +191,9 @@ impl Actor for Collector {
 
 impl Drop for Collector {
     fn drop(&mut self) {
-        self.stat.fmt(stdout(), self.scale).unwrap();
+        if get_err().is_ok() {
+            self.stat.fmt(stdout(), self.scale).unwrap();
+        }
     }
 }
 
