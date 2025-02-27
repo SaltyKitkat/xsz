@@ -8,8 +8,8 @@ use std::{
 };
 
 use async_channel::{bounded, Sender};
+use executor::block_on;
 use fs_util::get_ino;
-use futures_lite::future::block_on;
 use mimalloc::MiMalloc;
 use rustix::fs::OFlags;
 

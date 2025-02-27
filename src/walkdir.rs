@@ -7,10 +7,11 @@ use std::{
 };
 
 use async_channel::{bounded, Sender};
-use futures_lite::future::block_on;
 use nohash::BuildNoHashHasher;
 
-use crate::{actor::Runnable as _, fs_util::get_dev, global::config, spawn, Actor};
+use crate::{
+    actor::Runnable as _, executor::block_on, fs_util::get_dev, global::config, spawn, Actor,
+};
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 

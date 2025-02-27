@@ -1,12 +1,20 @@
-use std::{future::Future, sync::LazyLock, thread::Builder};
+use std::{
+    future::{pending, Future},
+    pin::pin,
+    sync::{Arc, LazyLock},
+    task::{Context, Poll, Wake, Waker},
+    thread::{current, park, Builder, Thread},
+};
 
-use async_channel::{unbounded, Sender};
+use async_channel::{unbounded, Receiver, Sender};
 use async_task::{Runnable, Task};
+use futures_lite::FutureExt;
 
 use crate::global::config;
 
 pub struct Executor {
     sender: Sender<Runnable>,
+    receiver: Receiver<Runnable>,
 }
 
 impl Executor {
@@ -26,7 +34,7 @@ impl Executor {
                 eprintln!("Failed to spawn worker thread: {}", e);
             }
         }
-        Self { sender }
+        Self { sender, receiver }
     }
     fn schedule(&self, runnable: Runnable) {
         self.sender.send_blocking(runnable).unwrap();
@@ -47,4 +55,34 @@ where
     let (runnable, task) = async_task::spawn(fut, schedule);
     runnable.schedule();
     task
+}
+
+pub fn block_on<F>(fut: F) -> F::Output
+where
+    F: Future + Send,
+    F::Output: Send,
+{
+    let recv = global().receiver.clone();
+    let f = fut.or(async move {
+        if let Ok(r) = recv.recv().await {
+            r.run();
+        }
+        pending().await
+    });
+    let mut f = pin!(f);
+    let thread = current();
+    struct T(Thread);
+    impl Wake for T {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(T(thread)));
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match f.as_mut().poll(&mut cx) {
+            Poll::Ready(r) => return r,
+            Poll::Pending => park(),
+        }
+    }
 }
