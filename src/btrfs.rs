@@ -311,7 +311,7 @@ impl Sv2Args {
         self.key.init(ino);
     }
 
-    pub fn search_file(&mut self, fd: OwnedFd, ino: u64) -> rustix::io::Result<Sv2ItemIter> {
+    pub fn search_file(&mut self, fd: OwnedFd, ino: u64) -> Sv2ItemIter {
         self.set_key(ino);
         Sv2ItemIter::new(self, fd)
     }
@@ -325,11 +325,13 @@ pub struct Sv2ItemIter<'arg> {
     last: bool,
 }
 impl Iterator for Sv2ItemIter<'_> {
-    type Item = IoctlSearchItem;
+    type Item = Result<IoctlSearchItem, Errno>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.need_ioctl() {
-            self.call_ioctl().unwrap();
+            if let Err(e) = self.call_ioctl() {
+                return Some(Err(e));
+            }
         }
         if self.finish() {
             return None;
@@ -339,8 +341,9 @@ impl Iterator for Sv2ItemIter<'_> {
         self.nrest_item -= 1;
         if self.need_ioctl() {
             self.sv2_arg.key.min_offset = ret.header.offset + 1;
+            self.sv2_arg.key.nr_items = u32::MAX;
         }
-        Some(ret)
+        Some(Ok(ret))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         (
@@ -373,18 +376,16 @@ impl<'arg> Sv2ItemIter<'arg> {
     fn finish(&self) -> bool {
         self.nrest_item == 0 && self.last
     }
-    pub fn new(sv2_arg: &'arg mut Sv2Args, fd: OwnedFd) -> Result<Self, Errno> {
+    pub fn new(sv2_arg: &'arg mut Sv2Args, fd: OwnedFd) -> Self {
         sv2_arg.key.nr_items = u32::MAX;
         sv2_arg.key.min_offset = 0;
         // other fields not reset, maybe wrong?
-        let mut ret = Self {
+        Self {
             sv2_arg,
             fd,
             pos: 0,
             nrest_item: 0,
             last: false,
-        };
-        ret.call_ioctl()?;
-        Ok(ret)
+        }
     }
 }

@@ -72,14 +72,14 @@ impl Actor for Worker {
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         fn inner<'s>(
             sv2_args: &'s mut Sv2Args,
-            path: Box<Path>,
+            path: &Path,
             self_nfile: &mut u64,
         ) -> Result<btrfs::Sv2ItemIter<'s>, ()> {
             let file = match OpenOptions::new()
                 .read(true)
                 .write(false)
                 .custom_flags((OFlags::NOFOLLOW | OFlags::NOCTTY | OFlags::NONBLOCK).bits() as _)
-                .open(&path)
+                .open(path)
             {
                 Ok(f) => f,
                 Err(e) => {
@@ -88,31 +88,38 @@ impl Actor for Worker {
                 }
             };
             let ino = get_ino(&file);
-            match sv2_args.search_file(file.into(), ino) {
-                Ok(iter) => {
-                    *self_nfile += 1;
-                    Ok(iter)
-                }
-                Err(e) => {
-                    set_err()?;
-                    if e.raw_os_error() == 25 {
-                        eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
-                    } else {
-                        eprintln!("{}: SEARCH_V2: {}", path.display(), e);
-                    }
-                    Err(())
-                }
-            }
+            *self_nfile += 1;
+            Ok(sv2_args.search_file(file.into(), ino))
         }
 
         for path in msg {
             get_err()?;
-            let Ok(iter) = inner(&mut self.sv2_args, path, &mut self.nfile) else {
+            let Ok(iter) = inner(&mut self.sv2_args, &path, &mut self.nfile) else {
                 continue;
             };
             for extent in iter {
-                if let Ok(Some(extent)) = extent.parse() {
-                    self.collector.push(extent).await;
+                let extent = match extent {
+                    Ok(extent) => extent,
+                    Err(e) => {
+                        set_err()?;
+                        if e.raw_os_error() == 25 {
+                            eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
+                        } else {
+                            eprintln!("{}: SEARCH_V2: {}", path.display(), e);
+                        }
+                        break;
+                    }
+                };
+                match extent.parse() {
+                    Ok(Some(extent)) => {
+                        self.collector.push(extent).await;
+                    }
+                    Err(e) => {
+                        set_err()?;
+                        eprintln!("{}", e);
+                        break;
+                    }
+                    _ => (),
                 }
             }
         }
