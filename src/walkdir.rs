@@ -13,7 +13,7 @@ use crate::{
     actor::Runnable as _,
     executor::block_on,
     fs_util::{get_dev, DevId},
-    global::config,
+    global::{config, get_err},
     spawn, Actor,
 };
 
@@ -59,20 +59,21 @@ impl JobMgr {
     // will return at most n jobs, maybe fewer
     fn get_n_jobs(&mut self, n: usize) -> Option<JobChunk> {
         let chunk = self.jobs.iter_mut().next()?;
-        let key = *chunk.0;
-        let jobs = if chunk.1.len() <= n {
-            self.jobs.remove(&key).unwrap()
+        let dev = *chunk.0;
+        let dirs = if chunk.1.len() <= n {
+            self.jobs.remove(&dev).unwrap()
         } else {
             chunk.1.drain(0..n).collect()
         };
-        Some(JobChunk {
-            dev: key,
-            dirs: jobs,
-        })
+        Some(JobChunk { dev, dirs })
     }
 
     fn is_empty(&self) -> bool {
         self.jobs.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.jobs.clear()
     }
 }
 
@@ -90,12 +91,12 @@ where
 {
     pub fn new(
         mut file_consumer: F,
-        path: impl IntoIterator<Item = impl Into<PathBuf>>,
+        paths: impl IntoIterator<Item = impl Into<PathBuf>>,
         nwalker: u32,
     ) -> Result<Self, io::Error> {
         assert_ne!(nwalker, 0);
         let mut files = vec![];
-        let chunks = path
+        let chunks = paths
             .into_iter()
             .map(|p| p.into().into_boxed_path())
             .filter_map(|p| {
@@ -165,15 +166,20 @@ where
     type Message = WalkDirMsg;
 
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
-        match msg {
-            WalkDirMsg::PushJobs(chunk) => {
-                self.global_joblist.push(chunk);
+        if get_err().is_ok() {
+            match msg {
+                WalkDirMsg::PushJobs(chunk) => {
+                    self.global_joblist.push(chunk);
+                }
+                WalkDirMsg::RequireJobs(addr) => {
+                    self.pending_walkers.push(addr);
+                }
             }
-            WalkDirMsg::RequireJobs(addr) => {
-                self.pending_walkers.push(addr);
-            }
+            self.job_balance().await;
+        } else {
+            self.global_joblist.clear();
+            self.pending_walkers.clear();
         }
-        self.job_balance().await;
         Ok(())
     }
 }
@@ -209,8 +215,8 @@ where
         } = msg;
         let mut dirs = VecDeque::from(dirs);
         while let Some(dir) = dirs.pop_back() {
-            if config().one_fs && get_dev(&dir) != dev {
-                continue;
+            if get_err().is_err() {
+                break;
             }
             let read_dir = match dir.read_dir() {
                 Ok(rd) => rd,
@@ -233,7 +239,9 @@ where
                 let path = entry.path().into_boxed_path();
 
                 if file_type.is_dir() {
-                    dirs.push_back(path);
+                    if !config().one_fs || get_dev(&path) == dev {
+                        dirs.push_back(path);
+                    }
                 } else if file_type.is_file() {
                     self.file_handler.consume(path).await;
                 }
