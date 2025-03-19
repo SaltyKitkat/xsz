@@ -7,7 +7,7 @@ use std::{
 
 use rustix::{
     io::Errno,
-    ioctl::{ioctl, ReadWriteOpcode, Updater},
+    ioctl::{ioctl, opcode, Updater},
 };
 
 pub const BTRFS_IOCTL_MAGIC: u8 = 0x94;
@@ -128,6 +128,7 @@ impl Display for Compression {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum ExtentType {
     Inline,
     Regular,
@@ -205,7 +206,7 @@ impl IoctlSearchItem {
             )));
         }
         if hlen != size_of::<FileExtentItem>() as u32 {
-            let errmsg = format!("Regular extent's header not 53 bytes ({}) long?!?", hlen,);
+            let errmsg = format!("Regular extent's header not 53 bytes ({}) long?!?", hlen);
             return Err(errmsg);
         }
         let disk_bytenr = self.item.disk_bytenr;
@@ -360,9 +361,10 @@ impl FusedIterator for Sv2ItemIter<'_> {}
 impl<'arg> Sv2ItemIter<'arg> {
     fn call_ioctl(&mut self) -> Result<(), Errno> {
         unsafe {
-            let ctl = Updater::<'_, ReadWriteOpcode<BTRFS_IOCTL_MAGIC, 17, Sv2Args>, _>::new(
-                self.sv2_arg,
-            );
+            let ctl =
+                Updater::<'_, { opcode::read_write::<Sv2Args>(BTRFS_IOCTL_MAGIC, 17) }, _>::new(
+                    self.sv2_arg,
+                );
             ioctl(&self.fd, ctl)?;
         }
         self.nrest_item = self.sv2_arg.key.nr_items;
