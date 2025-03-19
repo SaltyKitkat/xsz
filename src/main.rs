@@ -1,4 +1,5 @@
 use std::{
+    cmp::max,
     fs::OpenOptions,
     future::Future,
     io::stdout,
@@ -123,10 +124,11 @@ impl Actor for Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.collector
-            .sender()
-            .send_blocking(self.nfile.into())
-            .ok();
+        let sender = self.collector.sender().clone();
+        let nfile = self.nfile;
+        spawn(async move {
+            sender.send(nfile.into()).await.ok();
+        });
     }
 }
 
@@ -147,11 +149,11 @@ impl Collector {
         sender: &Sender<CollectorMsg>,
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
     ) {
-        let nthreads = config().jobs;
-        let (worker, r_worker) = bounded((nthreads * 2) as _);
-        for _ in 0..nthreads {
+        let nworkers = max(config().jobs - 1, 1);
+        let (worker_tx, worker_rx) = bounded(nworkers as _);
+        for _ in 0..nworkers {
             let worker = Worker::new(sender.clone());
-            spawn(worker.run(r_worker.clone()));
+            spawn(worker.run(worker_rx.clone()));
         }
         struct F(TaskPak<Box<Path>, <Worker as Actor>::Message>);
         impl FileConsumer for F {
@@ -164,11 +166,11 @@ impl Collector {
                 }
             }
         }
-        let fcb = move || F(TaskPak::new(worker.clone()));
-        let mut walkdir = WalkDir::new(fcb, paths, nthreads).unwrap();
-        let (s_walkdir, r_walkdir) = bounded(nthreads as _);
-        walkdir.spawn_walkers(&s_walkdir);
-        spawn(walkdir.run(r_walkdir));
+        let fcb = move || F(TaskPak::new(worker_tx.clone()));
+        let mut walkdir = WalkDir::new(fcb, paths, nworkers).unwrap();
+        let (walkdir_tx, walkdir_rx) = bounded(nworkers as _);
+        walkdir.spawn_walkers(&walkdir_tx);
+        spawn(walkdir.run(walkdir_rx));
     }
 }
 

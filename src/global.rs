@@ -59,7 +59,7 @@ impl Config {
         }
         let mut one_fs = false;
         let mut bytes = false;
-        let mut jobs = nthreads() + 2;
+        let mut jobs = nthreads();
         for opt in opt.options {
             match opt.id.as_str() {
                 "b" => bytes = true,
