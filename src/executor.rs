@@ -1,14 +1,14 @@
 use std::{
-    future::{pending, Future},
+    future::Future,
     pin::pin,
-    sync::{Arc, LazyLock},
-    task::{Context, Poll, Wake, Waker},
-    thread::{current, park, Builder, Thread},
+    sync::LazyLock,
+    task::{Context, Poll, Waker},
+    thread::Builder,
 };
 
 use async_channel::{unbounded, Receiver, Sender};
 use async_task::{Runnable, Task};
-use futures_lite::FutureExt;
+use futures_lite::{future::yield_now, FutureExt};
 
 use crate::global::config;
 
@@ -18,13 +18,13 @@ pub struct Executor {
 }
 
 impl Executor {
-    fn new(nthreads: usize) -> Self {
+    fn new(nthreads: u32) -> Self {
         let (sender, receiver) = unbounded::<Runnable>();
         for i in 0..nthreads {
             let receiver = receiver.clone();
             if let Err(e) = Builder::new()
                 .name(format!("xsz-worker{}", i))
-                .stack_size(16 * 1024)
+                .stack_size(4 * 1024)
                 .spawn(move || {
                     while let Ok(r) = receiver.recv_blocking() {
                         r.run();
@@ -42,7 +42,8 @@ impl Executor {
 }
 
 pub fn global() -> &'static Executor {
-    static EXECUTOR: LazyLock<Executor> = LazyLock::new(|| Executor::new(config().jobs));
+    // jobs - 1 because the main thread is also a worker thread when calling block_on
+    static EXECUTOR: LazyLock<Executor> = LazyLock::new(|| Executor::new(config().jobs - 1));
     &EXECUTOR
 }
 
@@ -59,30 +60,27 @@ where
 
 pub fn block_on<F>(fut: F) -> F::Output
 where
-    F: Future + Send,
-    F::Output: Send,
+    F: Future,
 {
     let recv = global().receiver.clone();
     let f = fut.or(async move {
-        if let Ok(r) = recv.recv().await {
-            r.run();
+        loop {
+            match recv.recv().await {
+                Ok(r) => {
+                    r.run();
+                }
+                Err(e) => eprintln!("{}", e),
+            }
+            yield_now().await;
         }
-        pending().await
     });
     let mut f = pin!(f);
-    let thread = current();
-    struct T(Thread);
-    impl Wake for T {
-        fn wake(self: Arc<Self>) {
-            self.0.unpark();
-        }
-    }
-    let waker = Waker::from(Arc::new(T(thread)));
+    let waker = Waker::noop();
     let mut cx = Context::from_waker(&waker);
     loop {
         match f.as_mut().poll(&mut cx) {
             Poll::Ready(r) => return r,
-            Poll::Pending => park(),
+            Poll::Pending => (),
         }
     }
 }

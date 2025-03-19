@@ -25,27 +25,21 @@ mod walkdir;
 use actor::{Actor, Runnable as _};
 use btrfs::{ExtentInfo, Sv2Args};
 use global::{config, get_err, set_err};
-use scale::{CompsizeStat, ExtentMap, Scale};
+use scale::{CompsizeStat, ExtentMap};
 use taskpak::TaskPak;
 use walkdir::{FileConsumer, WalkDir};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
+fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
     executor::spawn(future).detach();
 }
 
 fn main() {
-    let cfg = config();
-    let scale = if cfg.bytes {
-        Scale::Bytes
-    } else {
-        Scale::Human
-    };
-    let collector = Collector::new(scale);
+    let collector = Collector::new();
     let (s, r) = bounded(32);
-    collector.start(&s, &cfg.args);
+    collector.start(&s, &config().args);
     drop(s);
     block_on(collector.run(r));
     if get_err().is_err() {
@@ -54,16 +48,16 @@ fn main() {
 }
 
 struct Worker {
-    sv2_args: Sv2Args,
     collector: TaskPak<ExtentInfo, CollectorMsg>,
     nfile: u64,
+    sv2_args: Sv2Args,
 }
 impl Worker {
     fn new(collector: Sender<CollectorMsg>) -> Self {
         Self {
-            sv2_args: Sv2Args::new(),
             collector: TaskPak::new(collector),
             nfile: 0,
+            sv2_args: Sv2Args::new(),
         }
     }
 }
@@ -139,15 +133,13 @@ impl Drop for Worker {
 struct Collector {
     extent_map: ExtentMap,
     stat: CompsizeStat,
-    scale: Scale,
 }
 
 impl Collector {
-    fn new(scale: Scale) -> Self {
+    fn new() -> Self {
         Self {
             extent_map: ExtentMap::default(),
             stat: CompsizeStat::default(),
-            scale,
         }
     }
     fn start(
@@ -156,7 +148,7 @@ impl Collector {
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
     ) {
         let nthreads = config().jobs;
-        let (worker, r_worker) = bounded(nthreads * 2);
+        let (worker, r_worker) = bounded((nthreads * 2) as _);
         for _ in 0..nthreads {
             let worker = Worker::new(sender.clone());
             spawn(worker.run(r_worker.clone()));
@@ -174,7 +166,7 @@ impl Collector {
         }
         let fcb = move || F(TaskPak::new(worker.clone()));
         let mut walkdir = WalkDir::new(fcb, paths, nthreads).unwrap();
-        let (s_walkdir, r_walkdir) = bounded(nthreads);
+        let (s_walkdir, r_walkdir) = bounded(nthreads as _);
         walkdir.spawn_walkers(&s_walkdir);
         spawn(walkdir.run(r_walkdir));
     }
@@ -199,7 +191,7 @@ impl Actor for Collector {
 impl Drop for Collector {
     fn drop(&mut self) {
         if get_err().is_ok() {
-            self.stat.fmt(stdout(), self.scale).unwrap();
+            self.stat.fmt(stdout(), config().scale()).unwrap();
         }
     }
 }

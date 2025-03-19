@@ -10,7 +10,11 @@ use async_channel::{bounded, Sender};
 use nohash::BuildNoHashHasher;
 
 use crate::{
-    actor::Runnable as _, executor::block_on, fs_util::get_dev, global::config, spawn, Actor,
+    actor::Runnable as _,
+    executor::block_on,
+    fs_util::{get_dev, DevId},
+    global::config,
+    spawn, Actor,
 };
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
@@ -20,7 +24,7 @@ pub trait FileConsumer {
 }
 
 pub struct JobChunk {
-    dev: u64,
+    dev: DevId,
     dirs: Vec<Box<Path>>,
 }
 
@@ -36,7 +40,7 @@ impl JobChunk {
 }
 
 struct JobMgr {
-    jobs: HashMap<u64, Vec<Box<Path>>, BuildNoHashHasher<u64>>,
+    jobs: HashMap<DevId, Vec<Box<Path>>, BuildNoHashHasher<u64>>,
 }
 impl JobMgr {
     fn new() -> Self {
@@ -73,7 +77,7 @@ impl JobMgr {
 }
 
 pub struct WalkDir<F> {
-    nwalker: usize,
+    nwalker: u32,
     file_consumer: F,
     pending_walkers: Vec<Sender<WalkerMsg>>,
     global_joblist: JobMgr,
@@ -87,7 +91,7 @@ where
     pub fn new(
         mut file_consumer: F,
         path: impl IntoIterator<Item = impl Into<PathBuf>>,
-        nwalker: usize,
+        nwalker: u32,
     ) -> Result<Self, io::Error> {
         assert_ne!(nwalker, 0);
         let mut files = vec![];
@@ -142,7 +146,7 @@ where
                 break;
             }
         }
-        if self.pending_walkers.len() == self.nwalker {
+        if self.pending_walkers.len() as u32 == self.nwalker {
             self.pending_walkers.clear();
         }
     }

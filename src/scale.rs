@@ -98,62 +98,14 @@ impl CompsizeStat {
     // none       100%     88797796415  88797796415  364255758399
     // zstd        29%     11348289087  38384936755  116764780339
     pub fn fmt(&self, mut f: impl Write, scale: Scale) -> std::io::Result<()> {
-        fn write_table(
-            mut f: impl Write,
-            ty: &dyn Display,
-            percentage: &dyn Display,
-            disk_usage: &dyn Display,
-            uncomp_usage: &dyn Display,
-            refd_usage: &dyn Display,
-        ) -> std::io::Result<()> {
-            writeln!(
-                f,
-                "{:<10} {:<8} {:<12} {:<12} {:<12}",
-                ty, percentage, disk_usage, uncomp_usage, refd_usage
-            )
-        }
+        let f = &mut f;
         // total
-        {
-            let total_disk = self.prealloc.disk + self.stat.iter().map(|s| s.disk).sum::<u64>();
-            let total_uncomp =
-                self.prealloc.uncomp + self.stat.iter().map(|s| s.uncomp).sum::<u64>();
-            let total_refd = self.prealloc.refd + self.stat.iter().map(|s| s.refd).sum::<u64>();
-            if total_uncomp == 0 {
-                if self.nfile() == 0 {
-                    eprintln!("No Files.");
-                } else {
-                    eprintln!("All empty or still-delalloced files.");
-                }
-                return Ok(());
-            }
-            writeln!(
-                f,
-                "Processed {} files, {} regular extents ({} refs), {} inline.",
-                self.nfile, self.nextent, self.nref, self.ninline
-            )?;
-            write_table(
-                &mut f,
-                &"Type",
-                &"Perc",
-                &"Disk Usage",
-                &"Uncompressed",
-                &"Referenced",
-            )?;
-
-            let total_percentage = total_disk * 100 / total_uncomp;
-            write_table(
-                &mut f,
-                &"TOTAL",
-                &format!("{:>3}%", total_percentage),
-                &scale.scale(total_disk),
-                &scale.scale(total_uncomp),
-                &scale.scale(total_refd),
-            )?;
-        }
+        self.write_total(f, scale)?;
+        // normal
         let mut write_stat = |name, s: &ExtentStat| {
             if !s.is_empty() {
                 write_table(
-                    &mut f,
+                    f,
                     &name,
                     &format!("{:>3}%", s.get_percent()),
                     &scale.scale(s.disk),
@@ -163,7 +115,6 @@ impl CompsizeStat {
             }
             Ok::<_, std::io::Error>(())
         };
-        // normal
         for (i, s0) in self.stat.iter().enumerate() {
             write_stat(Compression::from_u8(i as _).name(), s0)?;
         }
@@ -171,4 +122,55 @@ impl CompsizeStat {
         write_stat("prealloc", &self.prealloc)?;
         Ok(())
     }
+
+    fn write_total(&self, f: &mut dyn Write, scale: Scale) -> Result<(), std::io::Error> {
+        let total_disk = self.prealloc.disk + self.stat.iter().map(|s| s.disk).sum::<u64>();
+        let total_uncomp = self.prealloc.uncomp + self.stat.iter().map(|s| s.uncomp).sum::<u64>();
+        let total_refd = self.prealloc.refd + self.stat.iter().map(|s| s.refd).sum::<u64>();
+        if total_uncomp == 0 {
+            if self.nfile() == 0 {
+                eprintln!("No Files.");
+            } else {
+                eprintln!("All empty or still-delalloced files.");
+            }
+            return Ok(());
+        }
+        writeln!(
+            f,
+            "Processed {} files, {} regular extents ({} refs), {} inline.",
+            self.nfile, self.nextent, self.nref, self.ninline
+        )?;
+        write_table(
+            f,
+            &"Type",
+            &"Perc",
+            &"Disk Usage",
+            &"Uncompressed",
+            &"Referenced",
+        )?;
+        let total_percentage = total_disk * 100 / total_uncomp;
+        write_table(
+            f,
+            &"TOTAL",
+            &format!("{:>3}%", total_percentage),
+            &scale.scale(total_disk),
+            &scale.scale(total_uncomp),
+            &scale.scale(total_refd),
+        )?;
+        Ok(())
+    }
+}
+fn write_table(
+    f: &mut dyn Write,
+    ty: &dyn Display,
+    percentage: &dyn Display,
+    disk_usage: &dyn Display,
+    uncomp_usage: &dyn Display,
+    refd_usage: &dyn Display,
+) -> std::io::Result<()> {
+    writeln!(
+        f,
+        "{:<10} {:<8} {:<12} {:<12} {:<12}",
+        ty, percentage, disk_usage, uncomp_usage, refd_usage
+    )
 }

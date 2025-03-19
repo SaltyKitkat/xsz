@@ -10,24 +10,33 @@ use std::{
 
 use just_getopt::{OptFlags, OptSpecs, OptValueType};
 
+use crate::scale::Scale;
+
 fn print_help() {
     const HELP_MSG: &str = include_str!("./helpmsg.txt");
     eprint!("{}", HELP_MSG);
 }
 
-fn nthreads() -> usize {
-    static NTHREADS: LazyLock<usize> =
-        LazyLock::new(|| available_parallelism().map(|n| n.get()).unwrap_or(4));
+fn nthreads() -> u32 {
+    static NTHREADS: LazyLock<u32> =
+        LazyLock::new(|| available_parallelism().map(|n| n.get() as _).unwrap_or(4));
     *NTHREADS
 }
 
 pub struct Config {
     pub one_fs: bool,
     pub bytes: bool,
-    pub jobs: usize,
+    pub jobs: u32,
     pub args: Box<[String]>,
 }
 impl Config {
+    pub fn scale(&self) -> Scale {
+        if self.bytes {
+            Scale::Bytes
+        } else {
+            Scale::Human
+        }
+    }
     fn from_args() -> Self {
         let opt_spec = OptSpecs::new()
             .flag(OptFlags::OptionsEverywhere)
@@ -56,10 +65,13 @@ impl Config {
                 "b" => bytes = true,
                 "x" => one_fs = true,
                 "j" => {
-                    let Some(arg_jobs) = opt.value.and_then(|n| n.parse().ok()) else {
+                    let Some(arg_jobs): Option<u32> = opt.value.and_then(|n| n.parse().ok()) else {
                         eprintln!("-j requires an integer option");
                         exit(1)
                     };
+                    if arg_jobs == 0 {
+                        eprintln!("-j requires an non-zero integer");
+                    }
                     jobs = arg_jobs;
                 }
                 "h" => {
