@@ -8,9 +8,9 @@ use std::{
     process::exit,
 };
 
-use async_channel::{bounded, Sender};
 use executor::block_on;
 use fs_util::get_ino;
+use kanal::{bounded_async as bounded, AsyncSender as Sender};
 use mimalloc::MiMalloc;
 use rustix::fs::OFlags;
 

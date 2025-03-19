@@ -4,7 +4,7 @@ use std::mem::take;
 
 use std::mem::replace;
 
-use async_channel::Sender;
+use kanal::AsyncSender as Sender;
 
 pub struct TaskPak<T, M>
 where

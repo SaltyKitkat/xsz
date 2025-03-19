@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use async_channel::{bounded, Sender};
+use kanal::{bounded_async as bounded, AsyncSender as Sender};
 use nohash::BuildNoHashHasher;
 
 use crate::{

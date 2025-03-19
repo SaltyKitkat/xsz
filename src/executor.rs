@@ -6,9 +6,9 @@ use std::{
     thread::Builder,
 };
 
-use async_channel::{unbounded, Receiver, Sender};
 use async_task::{Runnable, Task};
 use futures_lite::{future::yield_now, FutureExt};
+use kanal::{unbounded, Receiver, Sender};
 
 use crate::global::config;
 
@@ -26,7 +26,7 @@ impl Executor {
                 .name(format!("xsz-worker{}", i))
                 .stack_size(4 * 1024)
                 .spawn(move || {
-                    while let Ok(r) = receiver.recv_blocking() {
+                    while let Ok(r) = receiver.recv() {
                         r.run();
                     }
                 })
@@ -37,7 +37,7 @@ impl Executor {
         Self { sender, receiver }
     }
     fn schedule(&self, runnable: Runnable) {
-        self.sender.send_blocking(runnable).unwrap();
+        self.sender.send(runnable).unwrap();
     }
 }
 
@@ -65,7 +65,7 @@ where
     let recv = global().receiver.clone();
     let f = fut.or(async move {
         loop {
-            match recv.recv().await {
+            match recv.as_async().recv().await {
                 Ok(r) => {
                     r.run();
                 }

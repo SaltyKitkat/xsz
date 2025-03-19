@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-async-channel = "2.3.1"
 async-task = "4.7.1"
 futures-lite = "2.6.0"
 just-getopt = "1.4.1"
+kanal = "0.1.0"
 mimalloc = "0.1.44"
 nohash = "0.2.0"
-rustix = {version = "1.0.3", features = ["fs"]}
+rustix = { version = "1.0.3", features = [ "fs" ] }
 
 [profile]
 [profile.dev.package."*"]

@@ -1,4 +1,4 @@
-use async_channel::Receiver;
+use kanal::AsyncReceiver as Receiver;
 
 pub trait Actor {
     type Message;
