@@ -149,7 +149,7 @@ impl Collector {
         sender: &Sender<CollectorMsg>,
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
     ) {
-        let nworkers = max(config().jobs - 1, 1);
+        let nworkers = max(config().jobs, 1);
         let (worker_tx, worker_rx) = bounded(nworkers as _);
         for _ in 0..nworkers {
             let worker = Worker::new(sender.clone());
@@ -167,10 +167,7 @@ impl Collector {
             }
         }
         let fcb = move || F(TaskPak::new(worker_tx.clone()));
-        let mut walkdir = WalkDir::new(fcb, paths, nworkers).unwrap();
-        let (walkdir_tx, walkdir_rx) = bounded(nworkers as _);
-        walkdir.spawn_walkers(&walkdir_tx);
-        spawn(walkdir.run(walkdir_rx));
+        WalkDir::run(fcb, paths, nworkers);
     }
 }
 

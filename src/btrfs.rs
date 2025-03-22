@@ -7,14 +7,12 @@ use std::{
 
 use rustix::{
     io::Errno,
-    ioctl::{ioctl, opcode, Updater},
+    ioctl::{ioctl, opcode, Opcode, Updater},
 };
 
 pub const BTRFS_IOCTL_MAGIC: u8 = 0x94;
 pub const BTRFS_EXTENT_DATA_KEY: u32 = 108;
-pub const BTRFS_FILE_EXTENT_INLINE: u8 = 0;
-pub const BTRFS_FILE_EXTENT_REG: u8 = 1;
-pub const BTRFS_FILE_EXTENT_PREALLOC: u8 = 2;
+pub const BTRFS_IOCTL_SEARCH_V2: Opcode = opcode::read_write::<Sv2Args>(BTRFS_IOCTL_MAGIC, 17);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ExtentStat {
@@ -97,6 +95,7 @@ pub struct IoctlSearchItem {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(unused)]
 pub enum Compression {
     None = 0,
     Zlib,
@@ -127,22 +126,22 @@ impl Display for Compression {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[allow(unused)]
 pub enum ExtentType {
-    Inline,
+    Inline = 0,
     Regular,
     Prealloc,
 }
 
 impl ExtentType {
     pub fn from_u8(n: u8) -> Self {
-        match n {
-            BTRFS_FILE_EXTENT_INLINE => Self::Inline,
-            BTRFS_FILE_EXTENT_REG => Self::Regular,
-            BTRFS_FILE_EXTENT_PREALLOC => Self::Prealloc,
-            _ => panic!("Invalid extent type: {}", n),
+        if n > 2 {
+            panic!("Invalid extent type: {}", n);
         }
+        // Safety: the assertion checks that `n` is in valid `ExtentType` range.
+        unsafe { transmute(n) }
     }
 }
 
@@ -361,10 +360,7 @@ impl FusedIterator for Sv2ItemIter<'_> {}
 impl<'arg> Sv2ItemIter<'arg> {
     fn call_ioctl(&mut self) -> Result<(), Errno> {
         unsafe {
-            let ctl =
-                Updater::<'_, { opcode::read_write::<Sv2Args>(BTRFS_IOCTL_MAGIC, 17) }, _>::new(
-                    self.sv2_arg,
-                );
+            let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(self.sv2_arg);
             ioctl(&self.fd, ctl)?;
         }
         self.nrest_item = self.sv2_arg.key.nr_items;

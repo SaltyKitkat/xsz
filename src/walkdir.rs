@@ -1,6 +1,7 @@
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     future::Future,
+    hint::unreachable_unchecked,
     io,
     marker::Send,
     path::{Path, PathBuf},
@@ -58,12 +59,15 @@ impl JobMgr {
     }
     // will return at most n jobs, maybe fewer
     fn get_n_jobs(&mut self, n: usize) -> Option<JobChunk> {
-        let chunk = self.jobs.iter_mut().next()?;
-        let dev = *chunk.0;
-        let dirs = if chunk.1.len() <= n {
-            self.jobs.remove(&dev).unwrap()
+        let dev = *self.jobs.keys().next()?;
+        let Entry::Occupied(mut entry) = self.jobs.entry(dev) else {
+            // Safety: key is from keys() which is non-empty
+            unsafe { unreachable_unchecked() }
+        };
+        let dirs = if entry.get().len() <= n {
+            entry.remove()
         } else {
-            chunk.1.drain(0..n).collect()
+            entry.get_mut().drain(0..n).collect()
         };
         Some(JobChunk { dev, dirs })
     }
@@ -77,23 +81,22 @@ impl JobMgr {
     }
 }
 
-pub struct WalkDir<F> {
-    nwalker: u32,
-    file_consumer: F,
-    pending_walkers: Vec<Sender<WalkerMsg>>,
+type WalkerId = u8;
+pub struct WalkDir {
+    walkers: Box<[Sender<WalkerMsg>]>,
+    pending_walkers: Vec<WalkerId>,
     global_joblist: JobMgr,
 }
 
-impl<F, FC> WalkDir<F>
-where
-    F: FnMut() -> FC + Send + 'static,
-    FC: FileConsumer + Send + 'static,
-{
-    pub fn new(
+impl WalkDir {
+    pub fn run<F, FC>(
         mut file_consumer: F,
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
-        nwalker: u32,
-    ) -> Result<Self, io::Error> {
+        nwalker: u8,
+    ) where
+        F: FnMut() -> FC + Send + 'static,
+        FC: FileConsumer + Send + 'static,
+    {
         assert_ne!(nwalker, 0);
         let mut files = vec![];
         let chunks = paths
@@ -118,51 +121,60 @@ where
                 cb.consume(p).await;
             }
         });
-
-        Ok(Self {
-            nwalker,
-            file_consumer,
-            pending_walkers: vec![],
+        if global_joblist.is_empty() {
+            return;
+        }
+        let (sender, rx) = bounded(nwalker as _);
+        let walkers = (0..nwalker)
+            .map(|i| {
+                let walker = Walker::new(i, sender.clone(), file_consumer());
+                let (s, r) = bounded(0); // the walker must be waiting for jobs
+                spawn(walker.run(r));
+                s
+            })
+            .collect();
+        drop(sender);
+        let mut self_ = Self {
+            pending_walkers: (0..nwalker).collect(),
             global_joblist,
-        })
+            walkers,
+        };
+        block_on(self_.job_balance());
+        spawn(self_.run(rx));
     }
 
-    pub fn spawn_walkers(&mut self, sender: &Sender<WalkDirMsg>) {
-        for _ in 0..self.nwalker {
-            let walker = Walker::new(sender.clone(), (self.file_consumer)());
-            let (s, r) = bounded(1); // only 1 msg in channel is possible
-            spawn(walker.run(r));
-            self.pending_walkers.push(s);
-        }
-        block_on(self.job_balance());
+    fn cleanup(&mut self) {
+        self.global_joblist.clear();
+        self.pending_walkers = Default::default();
+        self.walkers = Default::default();
     }
 
     async fn job_balance(&mut self) {
-        while !self.global_joblist.is_empty() {
-            if let Some(addr) = self.pending_walkers.pop() {
-                let chunk = self.global_joblist.get_n_jobs(MAX_LOCAL_LEN / 2).unwrap();
-                let addr2 = addr.clone();
-                addr2.send(WalkerMsg { chunk, addr }).await.ok();
-            } else {
-                break;
+        // no global job pending, no need to balance
+        if self.global_joblist.is_empty() {
+            // no job pending and all walkers free
+            // we have our jobs done
+            // cleanup and exit
+            if self.pending_walkers.len() == self.walkers.len() {
+                self.cleanup();
             }
+            return;
         }
-        if self.pending_walkers.len() as u32 == self.nwalker {
-            self.pending_walkers.clear();
+        while !self.pending_walkers.is_empty() && !self.global_joblist.is_empty() {
+            let chunk = self.global_joblist.get_n_jobs(MAX_LOCAL_LEN / 2).unwrap();
+            let id = self.pending_walkers.pop().unwrap();
+            let addr = &self.walkers[id as usize];
+            addr.send(WalkerMsg { chunk }).await.ok();
         }
     }
 }
 
 pub enum WalkDirMsg {
     PushJobs(JobChunk),
-    RequireJobs(Sender<WalkerMsg>),
+    RequireJobs(WalkerId),
 }
 
-impl<F, FC> Actor for WalkDir<F>
-where
-    F: FnMut() -> FC + Send + 'static,
-    FC: FileConsumer + Send + 'static,
-{
+impl Actor for WalkDir {
     type Message = WalkDirMsg;
 
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
@@ -171,27 +183,28 @@ where
                 WalkDirMsg::PushJobs(chunk) => {
                     self.global_joblist.push(chunk);
                 }
-                WalkDirMsg::RequireJobs(addr) => {
-                    self.pending_walkers.push(addr);
+                WalkDirMsg::RequireJobs(id) => {
+                    self.pending_walkers.push(id);
                 }
             }
             self.job_balance().await;
         } else {
-            self.global_joblist.clear();
-            self.pending_walkers.clear();
+            self.cleanup();
         }
         Ok(())
     }
 }
 
 struct Walker<F> {
+    id: WalkerId,
     master: Sender<WalkDirMsg>,
     file_handler: F,
 }
 impl<F> Walker<F> {
-    fn new(addr: Sender<WalkDirMsg>, file_handler: F) -> Self {
+    fn new(id: WalkerId, master: Sender<WalkDirMsg>, file_handler: F) -> Self {
         Self {
-            master: addr,
+            id,
+            master,
             file_handler,
         }
     }
@@ -199,7 +212,6 @@ impl<F> Walker<F> {
 
 pub struct WalkerMsg {
     chunk: JobChunk,
-    addr: Sender<Self>,
 }
 
 impl<F> Actor for Walker<F>
@@ -211,7 +223,6 @@ where
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         let WalkerMsg {
             chunk: JobChunk { dev, dirs },
-            addr,
         } = msg;
         let mut dirs = VecDeque::from(dirs);
         while let Some(dir) = dirs.pop_back() {
@@ -256,7 +267,7 @@ where
             }
         }
         self.master
-            .send(WalkDirMsg::RequireJobs(addr))
+            .send(WalkDirMsg::RequireJobs(self.id))
             .await
             .map_err(|_| ())?;
         Ok(())

@@ -5,7 +5,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         LazyLock,
     },
-    thread::available_parallelism,
 };
 
 use just_getopt::{OptFlags, OptSpecs, OptValueType};
@@ -17,20 +16,20 @@ fn print_help() {
     eprint!("{}", HELP_MSG);
 }
 
-fn nthreads() -> u32 {
-    static NTHREADS: LazyLock<u32> =
-        LazyLock::new(|| available_parallelism().map(|n| n.get() as _).unwrap_or(4));
+fn nthreads() -> u8 {
+    static NTHREADS: LazyLock<u8> =
+        LazyLock::new(|| num_cpus::get_physical().try_into().unwrap_or(u8::MAX));
     *NTHREADS
 }
 
 pub struct Config {
     pub one_fs: bool,
     pub bytes: bool,
-    pub jobs: u32,
+    pub jobs: u8,
     pub args: Box<[String]>,
 }
 impl Config {
-    pub fn scale(&self) -> Scale {
+    pub const fn scale(&self) -> Scale {
         if self.bytes {
             Scale::Bytes
         } else {
@@ -65,7 +64,7 @@ impl Config {
                 "b" => bytes = true,
                 "x" => one_fs = true,
                 "j" => {
-                    let Some(arg_jobs): Option<u32> = opt.value.and_then(|n| n.parse().ok()) else {
+                    let Some(arg_jobs) = opt.value.and_then(|n| n.parse().ok()) else {
                         eprintln!("-j requires an integer option");
                         exit(1)
                     };
@@ -107,12 +106,12 @@ impl Global {
     }
 }
 
-fn global() -> &'static Global {
+const fn global() -> &'static Global {
     static GLOBAL: Global = Global::new();
     &GLOBAL
 }
 
-fn global_err() -> &'static AtomicBool {
+const fn global_err() -> &'static AtomicBool {
     &global().err
 }
 

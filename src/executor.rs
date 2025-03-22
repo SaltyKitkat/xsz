@@ -18,7 +18,7 @@ pub struct Executor {
 }
 
 impl Executor {
-    fn new(nthreads: u32) -> Self {
+    fn new(nthreads: u8) -> Self {
         let (sender, receiver) = unbounded::<Runnable>();
         for i in 0..nthreads {
             let receiver = receiver.clone();
