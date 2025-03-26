@@ -1,7 +1,6 @@
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     future::Future,
-    hint::unreachable_unchecked,
     io,
     marker::Send,
     os::fd::OwnedFd,
@@ -17,11 +16,11 @@ use rustix::{
 };
 
 use crate::{
-    actor::Runnable as _,
+    actor::{Actor, Runnable as _},
     executor::block_on,
     fs_util::{get_dev, DevId},
     global::{config, get_err},
-    spawn, Actor, File_,
+    spawn, File_,
 };
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
@@ -74,8 +73,7 @@ impl JobMgr {
     fn get_n_jobs(&mut self, n: usize) -> Option<JobChunk> {
         let dev = *self.jobs.keys().next()?;
         let Entry::Occupied(mut entry) = self.jobs.entry(dev) else {
-            // Safety: key is from keys() which is non-empty
-            unsafe { unreachable_unchecked() }
+            unreachable!("key is from keys() which is non-empty")
         };
         let (dirs, fd) = if entry.get().0.len() <= n {
             entry.remove()

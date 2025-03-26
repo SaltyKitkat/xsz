@@ -1,10 +1,8 @@
-use super::spawn;
-
-use std::mem::take;
-
-use std::mem::replace;
+use std::mem::{replace, take};
 
 use kanal::AsyncSender as Sender;
+
+use crate::spawn;
 
 pub struct TaskPak<T, M>
 where

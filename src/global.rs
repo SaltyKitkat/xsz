@@ -5,7 +5,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         LazyLock,
     },
-    thread::available_parallelism,
     u8,
 };
 
@@ -16,17 +15,6 @@ use crate::scale::Scale;
 fn print_help() {
     const HELP_MSG: &str = include_str!("./helpmsg.txt");
     eprint!("{}", HELP_MSG);
-}
-
-fn nthreads() -> u8 {
-    static NTHREADS: LazyLock<u8> = LazyLock::new(|| {
-        available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .try_into()
-            .unwrap_or(u8::MAX)
-    });
-    *NTHREADS
 }
 
 pub struct Config {
@@ -69,7 +57,7 @@ impl Config {
         }
         let mut one_fs = false;
         let mut bytes = false;
-        let mut jobs = nthreads();
+        let mut jobs = 1;
         for opt in opt.options {
             match opt.id.as_str() {
                 "b" => bytes = true,
@@ -126,19 +114,19 @@ const fn global_err() -> &'static AtomicBool {
     &global().err
 }
 
-pub fn get_err() -> Result<(), ()> {
-    if global_err().load(Ordering::Relaxed) {
+fn bool_to_result(is_err: bool) -> Result<(), ()> {
+    if is_err {
         Err(())
     } else {
         Ok(())
     }
 }
+pub fn get_err() -> Result<(), ()> {
+    bool_to_result(global_err().load(Ordering::Relaxed))
+}
 
 pub fn set_err() -> Result<(), ()> {
-    match global_err().compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed) {
-        Ok(_) => Ok(()),
-        Err(_) => Err(()),
-    }
+    bool_to_result(global_err().swap(true, Ordering::Relaxed))
 }
 
 pub fn config() -> &'static Config {

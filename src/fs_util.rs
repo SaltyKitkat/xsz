@@ -12,8 +12,6 @@ use rustix::{
 
 pub(crate) type DevId = NonZeroU64;
 pub(crate) fn get_dev(path: impl AsRef<Path>) -> DevId {
-    // let dev = path.as_ref().symlink_metadata().unwrap().dev();
-    // NonZeroU64::new(dev).unwrap()
     let dev = stat(path.as_ref()).unwrap().st_dev;
     NonZeroU64::new(dev).unwrap()
 }
