@@ -5,6 +5,8 @@ use std::{
         atomic::{AtomicBool, Ordering},
         LazyLock,
     },
+    thread::available_parallelism,
+    u8,
 };
 
 use just_getopt::{OptFlags, OptSpecs, OptValueType};
@@ -17,8 +19,13 @@ fn print_help() {
 }
 
 fn nthreads() -> u8 {
-    static NTHREADS: LazyLock<u8> =
-        LazyLock::new(|| num_cpus::get_physical().try_into().unwrap_or(u8::MAX));
+    static NTHREADS: LazyLock<u8> = LazyLock::new(|| {
+        available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .try_into()
+            .unwrap_or(u8::MAX)
+    });
     *NTHREADS
 }
 

@@ -1,15 +1,9 @@
-use std::{
-    cmp::max,
-    future::Future,
-    io::stdout,
-    path::{Path, PathBuf},
-    process::exit,
-};
+use std::{cmp::max, future::Future, io::stdout, path::PathBuf, process::exit};
 
 use executor::block_on;
+use fs_util::File_;
 use kanal::{bounded_async as bounded, AsyncSender as Sender};
 use mimalloc::MiMalloc;
-use rustix::fs::{open, Mode, OFlags};
 
 mod actor;
 mod btrfs;
@@ -60,43 +54,24 @@ impl Worker {
     }
 }
 impl Actor for Worker {
-    type Message = Box<[(Box<Path>, u64)]>;
-    async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
-        fn inner<'s>(
-            sv2_args: &'s mut Sv2Args,
-            path: &Path,
-            ino: u64,
-            self_nfile: &mut u64,
-        ) -> Result<btrfs::Sv2ItemIter<'s>, ()> {
-            let file = match open(
-                path,
-                OFlags::NOFOLLOW | OFlags::NOCTTY | OFlags::NONBLOCK,
-                Mode::RUSR,
-            ) {
-                Ok(fd) => fd,
-                Err(errno) => {
-                    eprintln!("{}: {}", path.display(), errno);
-                    return Err(());
-                }
-            };
-            *self_nfile += 1;
-            Ok(sv2_args.search_file(file.into(), ino))
-        }
-
-        for (path, ino) in msg {
+    type Message = Box<[File_]>;
+    async fn handle(&mut self, msgs: Self::Message) -> Result<(), ()> {
+        for f in msgs {
             get_err()?;
-            let Ok(iter) = inner(&mut self.sv2_args, &path, ino, &mut self.nfile) else {
-                continue;
-            };
+            self.nfile += 1;
+            let iter = self.sv2_args.search_file(f.borrow_fd(), f.ino());
             for extent in iter {
                 let extent = match extent {
                     Ok(extent) => extent,
                     Err(e) => {
                         set_err()?;
                         if e.raw_os_error() == 25 {
-                            eprintln!("{}: Not btrfs (or SEARCH_V2 unsupported)", path.display());
+                            eprintln!(
+                                "{}: Not btrfs (or SEARCH_V2 unsupported)",
+                                f.path().display()
+                            );
                         } else {
-                            eprintln!("{}: SEARCH_V2: {}", path.display(), e);
+                            eprintln!("{}: SEARCH_V2: {}", f.path().display(), e);
                         }
                         break;
                     }
@@ -151,15 +126,14 @@ impl Collector {
             let worker = Worker::new(sender.clone());
             spawn(worker.run(worker_rx.clone()));
         }
-        struct F(TaskPak<(Box<Path>, u64), <Worker as Actor>::Message>);
+        struct F(TaskPak<File_, <Worker as Actor>::Message>);
         impl FileConsumer for F {
             fn consume(
                 &mut self,
-                path: Box<Path>,
-                ino: u64,
+                f: File_,
             ) -> impl std::future::Future<Output = ()> + std::marker::Send {
                 async move {
-                    self.0.push((path, ino)).await;
+                    self.0.push(f).await;
                 }
             }
         }

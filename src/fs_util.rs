@@ -1,7 +1,12 @@
-use std::{num::NonZeroU64, path::Path};
+use std::{
+    num::NonZeroU64,
+    os::fd::{AsFd, BorrowedFd, OwnedFd},
+    path::Path,
+    sync::Arc,
+};
 
 use rustix::{
-    fs::{stat, statx, AtFlags, Dir, Mode, OFlags, StatxFlags, CWD},
+    fs::{fstat, open, stat, Mode, OFlags},
     io::Result,
 };
 
@@ -13,18 +18,28 @@ pub(crate) fn get_dev(path: impl AsRef<Path>) -> DevId {
     NonZeroU64::new(dev).unwrap()
 }
 
-pub(crate) fn get_ino(file: &Path) -> u64 {
-    statx(CWD, file, AtFlags::SYMLINK_NOFOLLOW, StatxFlags::INO)
-        .map(|s| s.stx_ino)
-        .unwrap()
+pub struct File_ {
+    fd: Arc<OwnedFd>,
+    path: Box<Path>,
+    ino: u64,
 }
 
-// use rustix apis to avoid using std
-pub(crate) fn read_dir(path: impl AsRef<Path>) -> Result<Dir> {
-    let dir = rustix::fs::open(
-        path.as_ref(),
-        OFlags::DIRECTORY | OFlags::NOFOLLOW,
-        Mode::RUSR,
-    )?;
-    Dir::new(dir)
+impl File_ {
+    pub fn new(fd: Arc<OwnedFd>, path: Box<Path>, ino: u64) -> Self {
+        Self { fd, path, ino }
+    }
+    pub fn borrow_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+    pub fn ino(&self) -> u64 {
+        self.ino
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn from_path(p: Box<Path>) -> Result<Self> {
+        let fd = Arc::new(open(p.as_ref(), OFlags::NOFOLLOW, Mode::RUSR)?);
+        let ino = fstat(fd.as_fd())?.st_ino;
+        Ok(Self::new(fd, p, ino))
+    }
 }

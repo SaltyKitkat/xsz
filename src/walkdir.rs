@@ -4,29 +4,35 @@ use std::{
     hint::unreachable_unchecked,
     io,
     marker::Send,
+    os::fd::OwnedFd,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use kanal::{bounded_async as bounded, AsyncSender as Sender};
 use nohash::BuildNoHashHasher;
-use rustix::path::Arg;
+use rustix::{
+    fs::{open, Dir, Mode, OFlags},
+    path::Arg,
+};
 
 use crate::{
     actor::Runnable as _,
     executor::block_on,
-    fs_util::{get_dev, get_ino, read_dir, DevId},
+    fs_util::{get_dev, DevId},
     global::{config, get_err},
-    spawn, Actor,
+    spawn, Actor, File_,
 };
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
 pub trait FileConsumer {
-    fn consume(&mut self, path: Box<Path>, ino: u64) -> impl Future<Output = ()> + Send;
+    fn consume(&mut self, f: File_) -> impl Future<Output = ()> + Send;
 }
 
 pub struct JobChunk {
     dev: DevId,
+    fd: Arc<OwnedFd>,
     dirs: Vec<Box<Path>>,
 }
 
@@ -34,15 +40,21 @@ impl JobChunk {
     fn from_path(path: impl Into<Box<Path>>) -> Result<Self, io::Error> {
         let path: Box<Path> = path.into();
         let dev = get_dev(&path);
+        let fd = open(
+            path.as_ref(),
+            OFlags::DIRECTORY | OFlags::NOFOLLOW,
+            Mode::RUSR,
+        )?;
         Ok(Self {
             dev,
+            fd: Arc::new(fd),
             dirs: vec![path.into()],
         })
     }
 }
 
 struct JobMgr {
-    jobs: HashMap<DevId, Vec<Box<Path>>, BuildNoHashHasher<u64>>,
+    jobs: HashMap<DevId, (Vec<Box<Path>>, Arc<OwnedFd>), BuildNoHashHasher<u64>>,
 }
 impl JobMgr {
     fn new() -> Self {
@@ -52,9 +64,9 @@ impl JobMgr {
     }
     fn push(&mut self, mut job_chunk: JobChunk) {
         match self.jobs.entry(job_chunk.dev) {
-            Entry::Occupied(mut o) => o.get_mut().append(&mut job_chunk.dirs),
+            Entry::Occupied(mut o) => o.get_mut().0.append(&mut job_chunk.dirs),
             Entry::Vacant(v) => {
-                v.insert(job_chunk.dirs);
+                v.insert((job_chunk.dirs, job_chunk.fd));
             }
         }
     }
@@ -65,12 +77,15 @@ impl JobMgr {
             // Safety: key is from keys() which is non-empty
             unsafe { unreachable_unchecked() }
         };
-        let dirs = if entry.get().len() <= n {
+        let (dirs, fd) = if entry.get().0.len() <= n {
             entry.remove()
         } else {
-            entry.get_mut().drain(0..n).collect()
+            (
+                entry.get_mut().0.drain(0..n).collect(),
+                entry.get().1.clone(),
+            )
         };
-        Some(JobChunk { dev, dirs })
+        Some(JobChunk { dev, fd, dirs })
     }
 
     fn is_empty(&self) -> bool {
@@ -119,8 +134,10 @@ impl WalkDir {
         let mut cb = file_consumer();
         spawn(async move {
             for p in files {
-                let ino = get_ino(&p);
-                cb.consume(p, ino).await;
+                let Ok(f) = File_::from_path(p) else {
+                    continue;
+                };
+                cb.consume(f).await;
             }
         });
         if global_joblist.is_empty() {
@@ -224,15 +241,21 @@ where
 
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         let WalkerMsg {
-            chunk: JobChunk { dev, dirs },
+            chunk: JobChunk { dev, dirs, fd },
         } = msg;
         let mut dirs = VecDeque::from(dirs);
+        let mut newfs_dirs = Vec::new();
         while let Some(dir_path) = dirs.pop_back() {
             if get_err().is_err() {
                 break;
             }
-            // let read_dir = match dir_path.read_dir() {
-            let read_dir = match read_dir(&dir_path) {
+            let read_dir = match open(
+                dir_path.as_ref(),
+                OFlags::DIRECTORY | OFlags::NOFOLLOW,
+                Mode::RUSR,
+            )
+            .and_then(Dir::new)
+            {
                 Ok(rd) => rd,
                 Err(e) => {
                     eprintln!("{}: {}", dir_path.display(), e);
@@ -258,18 +281,44 @@ where
                     .into_boxed_path();
 
                 if file_type.is_dir() {
-                    if !config().one_fs || get_dev(&path) == dev {
+                    let dir_dev = get_dev(&path);
+                    if dir_dev == dev {
                         dirs.push_back(path);
+                    } else if !config().one_fs {
+                        let Ok(fd) = open(
+                            path.as_ref(),
+                            OFlags::DIRECTORY | OFlags::NOFOLLOW,
+                            Mode::RUSR,
+                        ) else {
+                            continue;
+                        };
+                        newfs_dirs.push(JobChunk {
+                            dev: dir_dev,
+                            fd: Arc::new(fd),
+                            dirs: vec![path],
+                        });
                     }
                 } else if file_type.is_file() {
-                    self.file_handler.consume(path, entry.ino()).await;
+                    self.file_handler
+                        .consume(File_::new(fd.clone(), path, entry.ino()))
+                        .await;
                 }
+            }
+            for chunk in newfs_dirs.drain(..) {
+                self.master
+                    .send(WalkDirMsg::PushJobs(chunk))
+                    .await
+                    .map_err(|_| ())?;
             }
             if dirs.len() > MAX_LOCAL_LEN {
                 let r = dirs.len() - MAX_LOCAL_LEN / 2;
                 let v: Vec<_> = dirs.drain(0..r).collect();
                 self.master
-                    .send(WalkDirMsg::PushJobs(JobChunk { dev, dirs: v }))
+                    .send(WalkDirMsg::PushJobs(JobChunk {
+                        dev,
+                        fd: fd.clone(),
+                        dirs: v,
+                    }))
                     .await
                     .map_err(|_| ())?;
             }

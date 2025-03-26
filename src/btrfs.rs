@@ -1,9 +1,4 @@
-use std::{
-    fmt::{Debug, Display},
-    iter::FusedIterator,
-    mem::transmute,
-    os::fd::OwnedFd,
-};
+use std::{fmt::Display, iter::FusedIterator, mem::transmute, os::fd::BorrowedFd};
 
 use rustix::{
     io::Errno,
@@ -311,20 +306,20 @@ impl Sv2Args {
         self.key.init(ino);
     }
 
-    pub fn search_file(&mut self, fd: OwnedFd, ino: u64) -> Sv2ItemIter {
+    pub fn search_file<'fd>(&mut self, fd: BorrowedFd<'fd>, ino: u64) -> Sv2ItemIter<'_, 'fd> {
         self.set_key(ino);
         Sv2ItemIter::new(self, fd)
     }
 }
 #[derive(Debug)]
-pub struct Sv2ItemIter<'arg> {
+pub struct Sv2ItemIter<'arg, 'fd> {
     sv2_arg: &'arg mut Sv2Args,
-    fd: OwnedFd,
+    fd: BorrowedFd<'fd>,
     pos: usize,
     nrest_item: u32,
     last: bool,
 }
-impl Iterator for Sv2ItemIter<'_> {
+impl Iterator for Sv2ItemIter<'_, '_> {
     type Item = Result<IoctlSearchItem, Errno>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -356,8 +351,8 @@ impl Iterator for Sv2ItemIter<'_> {
         )
     }
 }
-impl FusedIterator for Sv2ItemIter<'_> {}
-impl<'arg> Sv2ItemIter<'arg> {
+impl FusedIterator for Sv2ItemIter<'_, '_> {}
+impl<'arg, 'fd> Sv2ItemIter<'arg, 'fd> {
     fn call_ioctl(&mut self) -> Result<(), Errno> {
         unsafe {
             let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(self.sv2_arg);
@@ -374,7 +369,7 @@ impl<'arg> Sv2ItemIter<'arg> {
     fn finish(&self) -> bool {
         self.nrest_item == 0 && self.last
     }
-    pub fn new(sv2_arg: &'arg mut Sv2Args, fd: OwnedFd) -> Self {
+    pub fn new(sv2_arg: &'arg mut Sv2Args, fd: BorrowedFd<'fd>) -> Self {
         sv2_arg.key.nr_items = u32::MAX;
         sv2_arg.key.min_offset = 0;
         // other fields not reset, maybe wrong?
