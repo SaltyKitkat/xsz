@@ -9,11 +9,12 @@ use std::{
 
 use kanal::{bounded_async as bounded, AsyncSender as Sender};
 use nohash::BuildNoHashHasher;
+use rustix::path::Arg;
 
 use crate::{
     actor::Runnable as _,
     executor::block_on,
-    fs_util::{get_dev, DevId},
+    fs_util::{get_dev, get_ino, read_dir, DevId},
     global::{config, get_err},
     spawn, Actor,
 };
@@ -21,7 +22,7 @@ use crate::{
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
 pub trait FileConsumer {
-    fn consume(&mut self, path: Box<Path>) -> impl Future<Output = ()> + Send;
+    fn consume(&mut self, path: Box<Path>, ino: u64) -> impl Future<Output = ()> + Send;
 }
 
 pub struct JobChunk {
@@ -89,7 +90,7 @@ pub struct WalkDir {
 }
 
 impl WalkDir {
-    pub fn run<F, FC>(
+    pub fn spawn<F, FC>(
         mut file_consumer: F,
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
         nwalker: u8,
@@ -118,7 +119,8 @@ impl WalkDir {
         let mut cb = file_consumer();
         spawn(async move {
             for p in files {
-                cb.consume(p).await;
+                let ino = get_ino(&p);
+                cb.consume(p, ino).await;
             }
         });
         if global_joblist.is_empty() {
@@ -225,14 +227,15 @@ where
             chunk: JobChunk { dev, dirs },
         } = msg;
         let mut dirs = VecDeque::from(dirs);
-        while let Some(dir) = dirs.pop_back() {
+        while let Some(dir_path) = dirs.pop_back() {
             if get_err().is_err() {
                 break;
             }
-            let read_dir = match dir.read_dir() {
+            // let read_dir = match dir_path.read_dir() {
+            let read_dir = match read_dir(&dir_path) {
                 Ok(rd) => rd,
                 Err(e) => {
-                    eprintln!("{}: {}", dir.display(), e);
+                    eprintln!("{}: {}", dir_path.display(), e);
                     continue;
                 }
             };
@@ -241,20 +244,25 @@ where
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
-                        eprintln!("{}: {}", dir.display(), e);
+                        eprintln!("{}: {}", dir_path.display(), e);
                         continue;
                     }
                 };
+                if entry.file_name() == c"." || entry.file_name() == c".." {
+                    continue;
+                }
 
-                let file_type = entry.file_type().unwrap();
-                let path = entry.path().into_boxed_path();
+                let file_type = entry.file_type();
+                let path = dir_path
+                    .join(entry.file_name().as_str().unwrap())
+                    .into_boxed_path();
 
                 if file_type.is_dir() {
                     if !config().one_fs || get_dev(&path) == dev {
                         dirs.push_back(path);
                     }
                 } else if file_type.is_file() {
-                    self.file_handler.consume(path).await;
+                    self.file_handler.consume(path, entry.ino()).await;
                 }
             }
             if dirs.len() > MAX_LOCAL_LEN {

@@ -1,18 +1,15 @@
 use std::{
     cmp::max,
-    fs::OpenOptions,
     future::Future,
     io::stdout,
-    os::unix::fs::OpenOptionsExt as _,
     path::{Path, PathBuf},
     process::exit,
 };
 
 use executor::block_on;
-use fs_util::get_ino;
 use kanal::{bounded_async as bounded, AsyncSender as Sender};
 use mimalloc::MiMalloc;
-use rustix::fs::OFlags;
+use rustix::fs::{open, Mode, OFlags};
 
 mod actor;
 mod btrfs;
@@ -63,33 +60,32 @@ impl Worker {
     }
 }
 impl Actor for Worker {
-    type Message = Box<[Box<Path>]>;
+    type Message = Box<[(Box<Path>, u64)]>;
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
         fn inner<'s>(
             sv2_args: &'s mut Sv2Args,
             path: &Path,
+            ino: u64,
             self_nfile: &mut u64,
         ) -> Result<btrfs::Sv2ItemIter<'s>, ()> {
-            let file = match OpenOptions::new()
-                .read(true)
-                .write(false)
-                .custom_flags((OFlags::NOFOLLOW | OFlags::NOCTTY | OFlags::NONBLOCK).bits() as _)
-                .open(path)
-            {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!("{}: {}", path.display(), e);
+            let file = match open(
+                path,
+                OFlags::NOFOLLOW | OFlags::NOCTTY | OFlags::NONBLOCK,
+                Mode::RUSR,
+            ) {
+                Ok(fd) => fd,
+                Err(errno) => {
+                    eprintln!("{}: {}", path.display(), errno);
                     return Err(());
                 }
             };
-            let ino = get_ino(&file);
             *self_nfile += 1;
             Ok(sv2_args.search_file(file.into(), ino))
         }
 
-        for path in msg {
+        for (path, ino) in msg {
             get_err()?;
-            let Ok(iter) = inner(&mut self.sv2_args, &path, &mut self.nfile) else {
+            let Ok(iter) = inner(&mut self.sv2_args, &path, ino, &mut self.nfile) else {
                 continue;
             };
             for extent in iter {
@@ -155,19 +151,20 @@ impl Collector {
             let worker = Worker::new(sender.clone());
             spawn(worker.run(worker_rx.clone()));
         }
-        struct F(TaskPak<Box<Path>, <Worker as Actor>::Message>);
+        struct F(TaskPak<(Box<Path>, u64), <Worker as Actor>::Message>);
         impl FileConsumer for F {
             fn consume(
                 &mut self,
                 path: Box<Path>,
+                ino: u64,
             ) -> impl std::future::Future<Output = ()> + std::marker::Send {
-                async {
-                    self.0.push(path).await;
+                async move {
+                    self.0.push((path, ino)).await;
                 }
             }
         }
         let fcb = move || F(TaskPak::new(worker_tx.clone()));
-        WalkDir::run(fcb, paths, nworkers);
+        WalkDir::spawn(fcb, paths, nworkers);
     }
 }
 

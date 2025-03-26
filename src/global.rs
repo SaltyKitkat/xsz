@@ -36,7 +36,11 @@ impl Config {
             Scale::Human
         }
     }
-    fn from_args() -> Self {
+    fn from_args<I, S>(args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: ToString,
+    {
         let opt_spec = OptSpecs::new()
             .flag(OptFlags::OptionsEverywhere)
             .option("b", "b", OptValueType::None)
@@ -47,7 +51,7 @@ impl Config {
             .option("h", "help", OptValueType::None)
             .option("j", "j", OptValueType::Required)
             .option("j", "jobs", OptValueType::Required);
-        let opt = opt_spec.getopt(args().skip(1));
+        let opt = opt_spec.getopt(args);
         if let Some(unknown_arg) = opt.unknown.first() {
             if unknown_arg.len() > 1 {
                 eprintln!("xsz: unrecognized option '--{}'", unknown_arg);
@@ -101,7 +105,7 @@ struct Global {
 impl Global {
     const fn new() -> Self {
         let err = AtomicBool::new(false);
-        let config: LazyLock<Config> = LazyLock::new(|| Config::from_args());
+        let config: LazyLock<Config> = LazyLock::new(|| Config::from_args(args().skip(1)));
         Self { err, config }
     }
 }
