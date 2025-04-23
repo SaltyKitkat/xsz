@@ -1,4 +1,4 @@
-use std::{cmp::max, io::stdout, path::PathBuf};
+use std::{io::stdout, path::PathBuf};
 
 use kanal::{bounded_async as bounded, AsyncSender as Sender};
 
@@ -31,7 +31,7 @@ impl Collector {
         sender: Sender<CollectorMsg>,
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
     ) {
-        let nworkers = max(config().jobs, 1);
+        let nworkers = config().jobs;
         let (worker_tx, worker_rx) = bounded(nworkers as _);
         pub(crate) struct F(TaskPak<File_, <Worker as Actor>::Message>);
         impl FileConsumer for F {

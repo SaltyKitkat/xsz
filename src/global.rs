@@ -84,6 +84,7 @@ impl Config {
             print_help();
             exit(1);
         }
+        assert!(jobs >= 1);
         Self {
             one_fs,
             bytes,

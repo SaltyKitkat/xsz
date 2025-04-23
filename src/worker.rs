@@ -28,7 +28,7 @@ impl Worker {
     pub(crate) async fn handle_file(&mut self, f: File_) -> Result<(), ()> {
         self.nfile += 1;
         let iter = self.sv2_args.search_file(f.borrow_fd(), f.ino());
-        Ok(for extent in iter {
+        for extent in iter {
             let extent = match extent {
                 Ok(extent) => extent,
                 Err(e) => {
@@ -55,7 +55,8 @@ impl Worker {
                 }
                 _ => (),
             }
-        })
+        }
+        Ok(())
     }
 }
 
