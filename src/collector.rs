@@ -7,7 +7,7 @@ use crate::{
     btrfs::ExtentInfo,
     fs_util::File_,
     global::{config, get_err},
-    scale::{CompsizeStat, ExtentMap},
+    scale::CompsizeStat,
     spawn,
     taskpak::TaskPak,
     walkdir::{FileConsumer, WalkDir},
@@ -15,14 +15,12 @@ use crate::{
 };
 
 pub(crate) struct Collector {
-    pub(crate) extent_map: ExtentMap,
     pub(crate) stat: CompsizeStat,
 }
 
 impl Collector {
     pub(crate) fn new() -> Self {
         Self {
-            extent_map: ExtentMap::default(),
             stat: CompsizeStat::default(),
         }
     }
@@ -58,7 +56,7 @@ impl Actor for Collector {
         match msg {
             CollectorMsg::Extent(extents) => {
                 for extent in extents {
-                    self.stat.insert(&mut self.extent_map, extent);
+                    self.stat.insert(extent);
                 }
             }
             CollectorMsg::NFile(n) => *self.stat.nfile_mut() += n,

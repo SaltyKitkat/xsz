@@ -9,21 +9,6 @@ pub const BTRFS_IOCTL_MAGIC: u8 = 0x94;
 pub const BTRFS_EXTENT_DATA_KEY: u32 = 108;
 pub const BTRFS_IOCTL_SEARCH_V2: Opcode = opcode::read_write::<Sv2Args>(BTRFS_IOCTL_MAGIC, 17);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct ExtentStat {
-    pub disk: u64,
-    pub uncomp: u64,
-    pub refd: u64,
-}
-impl ExtentStat {
-    pub fn is_empty(&self) -> bool {
-        self.uncomp == 0
-    }
-    pub fn get_percent(&self) -> u64 {
-        self.disk * 100 / self.uncomp
-    }
-}
-
 // le on disk
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
@@ -36,7 +21,7 @@ pub struct IoctlSearchHeader {
 }
 impl IoctlSearchHeader {
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let raw = &*(buf.as_ptr() as *const IoctlSearchHeader);
+        let raw = &*buf.as_ptr().cast::<Self>();
         Self {
             transid: u64::from_le(raw.transid),
             objectid: u64::from_le(raw.objectid),
@@ -47,26 +32,20 @@ impl IoctlSearchHeader {
     }
 }
 
-// le on disk
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy)]
 #[repr(packed)]
-pub struct FileExtentItem {
+struct FileExtentHeader {
     pub generation: u64,
     pub ram_bytes: u64,
     pub compression: u8,
     pub encryption: u8,
     pub other_encoding: u16,
     pub r#type: u8,
-    // following u64 * 4 for regular extent, or inline data for inline extent
-    pub disk_bytenr: u64,
-    pub disk_num_bytes: u64,
-    pub offset: u64,
-    pub num_bytes: u64,
 }
-const EXTENT_INLINE_HEADER_SIZE: usize = 21;
-impl FileExtentItem {
+
+impl FileExtentHeader {
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let raw = &*(buf.as_ptr() as *const FileExtentItem);
+        let raw = &*buf.as_ptr().cast::<Self>();
         Self {
             generation: u64::from_le(raw.generation),
             ram_bytes: u64::from_le(raw.ram_bytes),
@@ -74,6 +53,25 @@ impl FileExtentItem {
             encryption: u8::from_le(raw.encryption),
             other_encoding: u16::from_le(raw.other_encoding),
             r#type: u8::from_le(raw.r#type),
+        }
+    }
+    fn is_inline(&self) -> bool {
+        ExtentType::Inline == ExtentType::from_u8(self.r#type)
+    }
+}
+#[derive(Clone, Copy)]
+#[repr(packed)]
+struct Meta {
+    pub disk_bytenr: u64,
+    pub disk_num_bytes: u64,
+    pub offset: u64,
+    pub num_bytes: u64,
+}
+
+impl Meta {
+    unsafe fn from_le_raw(buf: &[u8]) -> Self {
+        let raw = &*buf.as_ptr().cast::<Self>();
+        Self {
             disk_bytenr: u64::from_le(raw.disk_bytenr),
             disk_num_bytes: u64::from_le(raw.disk_num_bytes),
             offset: u64::from_le(raw.offset),
@@ -81,11 +79,53 @@ impl FileExtentItem {
         }
     }
 }
+#[derive(Clone, Copy)]
+union DataOrMeta {
+    data: (),
+    meta: Meta,
+}
+// le on disk
+#[derive(Clone, Copy)]
+#[repr(packed)]
+pub struct FileExtent {
+    pub(self) header: FileExtentHeader,
+    pub(self) tail: DataOrMeta,
+}
+impl FileExtent {
+    unsafe fn from_le_raw(buf: &[u8]) -> Self {
+        let mut ret = Self {
+            header: FileExtentHeader::from_le_raw(buf),
+            tail: DataOrMeta { data: () },
+        };
+        if ret.header.is_inline() {
+            return ret;
+        }
+        ret.tail = DataOrMeta {
+            meta: Meta::from_le_raw(&buf[size_of_val(&ret.header)..]),
+        };
+        ret
+    }
+}
 
 #[repr(packed)]
 pub struct IoctlSearchItem {
     pub(self) header: IoctlSearchHeader,
-    pub(self) item: FileExtentItem,
+    pub(self) item: FileExtent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Stat {
+    pub disk: u64,
+    pub uncomp: u64,
+    pub refd: u64,
+}
+impl Stat {
+    pub fn is_empty(&self) -> bool {
+        self.uncomp == 0
+    }
+    pub fn get_percent(&self) -> u64 {
+        self.disk * 100 / self.uncomp
+    }
 }
 
 #[repr(u8)]
@@ -142,24 +182,17 @@ impl ExtentType {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ExtentInfo {
-    key: u64,
+    objectid: u64,
+    offset: u64,
+    disk_bytenr: u64,
     r#type: ExtentType,
-    comp: Compression,
-    stat: ExtentStat,
+    compression: Compression,
+    stat: Stat,
 }
 
 impl ExtentInfo {
-    pub fn new(key: u64, r#type: ExtentType, comp: Compression, stat: ExtentStat) -> Self {
-        Self {
-            key,
-            r#type,
-            comp,
-            stat,
-        }
-    }
-
     pub fn key(&self) -> u64 {
-        self.key
+        self.disk_bytenr
     }
 
     pub fn r#type(&self) -> ExtentType {
@@ -167,10 +200,10 @@ impl ExtentInfo {
     }
 
     pub fn comp(&self) -> Compression {
-        self.comp
+        self.compression
     }
 
-    pub fn stat(&self) -> ExtentStat {
+    pub fn stat(&self) -> Stat {
         self.stat
     }
 }
@@ -178,32 +211,37 @@ impl ExtentInfo {
 impl IoctlSearchItem {
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
         let header = IoctlSearchHeader::from_le_raw(&buf[..size_of::<IoctlSearchHeader>()]);
-        let item = FileExtentItem::from_le_raw(&buf[size_of::<IoctlSearchHeader>()..]);
+        let item = FileExtent::from_le_raw(&buf[size_of::<IoctlSearchHeader>()..]);
         Self { header, item }
     }
     pub fn parse(&self) -> Result<Option<ExtentInfo>, String> {
         let hlen = self.header.len;
-        let uncomp_bytes = self.item.ram_bytes;
-        let comp_type = Compression::from_u8(self.item.compression);
-        let extent_type = ExtentType::from_u8(self.item.r#type);
-        if extent_type == ExtentType::Inline {
-            let disk_num_bytes = hlen as u64 - EXTENT_INLINE_HEADER_SIZE as u64;
-            return Ok(Some(ExtentInfo::new(
-                0,
-                extent_type,
-                comp_type,
-                ExtentStat {
+        let ram_bytes = self.item.header.ram_bytes;
+        let compression = Compression::from_u8(self.item.header.compression);
+        let r#type = ExtentType::from_u8(self.item.header.r#type);
+        let objectid = self.header.objectid;
+        let offset = self.header.offset;
+        if self.item.header.is_inline() {
+            let disk_num_bytes = hlen as u64 - size_of_val(&self.item.header) as u64;
+            return Ok(Some(ExtentInfo {
+                objectid,
+                offset,
+                disk_bytenr: 0,
+                r#type,
+                compression,
+                stat: Stat {
                     disk: disk_num_bytes,
-                    uncomp: uncomp_bytes,
-                    refd: uncomp_bytes,
+                    uncomp: ram_bytes,
+                    refd: ram_bytes,
                 },
-            )));
+            }));
         }
-        if hlen != size_of::<FileExtentItem>() as u32 {
+        let meta = unsafe { &self.item.tail.meta };
+        if hlen != size_of::<FileExtent>() as u32 {
             let errmsg = format!("Regular extent's header not 53 bytes ({}) long?!?", hlen);
             return Err(errmsg);
         }
-        let disk_bytenr = self.item.disk_bytenr;
+        let disk_bytenr = meta.disk_bytenr;
         // is hole
         if disk_bytenr == 0 {
             return Ok(None);
@@ -215,18 +253,20 @@ impl IoctlSearchItem {
         }
 
         let disk_bytenr = disk_bytenr >> 12;
-        let disk_bytes = self.item.disk_num_bytes;
-        let refd_bytes = self.item.num_bytes;
-        Ok(Some(ExtentInfo::new(
+        let disk_bytes = meta.disk_num_bytes;
+        let refd_bytes = meta.num_bytes;
+        Ok(Some(ExtentInfo {
+            objectid,
+            offset,
             disk_bytenr,
-            extent_type,
-            comp_type,
-            ExtentStat {
+            r#type,
+            compression,
+            stat: Stat {
                 disk: disk_bytes,
-                uncomp: uncomp_bytes,
+                uncomp: ram_bytes,
                 refd: refd_bytes,
             },
-        )))
+        }))
     }
 }
 

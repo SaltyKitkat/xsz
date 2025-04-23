@@ -2,7 +2,7 @@ use std::{collections::HashSet, fmt::Display, io::Write};
 
 use nohash::BuildNoHashHasher;
 
-use crate::btrfs::{Compression, ExtentInfo, ExtentStat, ExtentType};
+use crate::btrfs::{Compression, ExtentInfo, ExtentType, Stat};
 
 const UNITS: &[u8; 7] = b"BKMGTPE";
 pub type ExtentMap = HashSet<u64, BuildNoHashHasher<u64>>;
@@ -44,9 +44,9 @@ pub struct CompsizeStat {
     nfile: u64,
     ninline: u64,
     nref: u64,
-    nextent: u64,
-    prealloc: ExtentStat,
-    stat: [ExtentStat; 4],
+    prealloc: Stat,
+    stat: [Stat; 4],
+    extent_map: ExtentMap,
 }
 
 impl CompsizeStat {
@@ -59,8 +59,14 @@ impl CompsizeStat {
     pub fn nref(&self) -> u64 {
         self.nref
     }
+    pub fn ninline(&self) -> u64 {
+        self.ninline
+    }
+    pub fn nextent(&self) -> u64 {
+        self.extent_map.len() as _
+    }
 
-    pub fn insert(&mut self, extent_map: &mut ExtentMap, extent: ExtentInfo) {
+    pub fn insert(&mut self, extent: ExtentInfo) {
         let comp = extent.comp();
         let stat = extent.stat();
         match extent.r#type() {
@@ -72,8 +78,7 @@ impl CompsizeStat {
             }
             ExtentType::Regular => {
                 self.nref += 1;
-                if extent_map.insert(extent.key()) {
-                    self.nextent += 1;
+                if self.extent_map.insert(extent.key()) {
                     self.stat[comp.as_usize()].disk += stat.disk;
                     self.stat[comp.as_usize()].uncomp += stat.uncomp;
                 }
@@ -81,8 +86,7 @@ impl CompsizeStat {
             }
             ExtentType::Prealloc => {
                 self.nref += 1;
-                if extent_map.insert(extent.key()) {
-                    self.nextent += 1;
+                if self.extent_map.insert(extent.key()) {
                     self.prealloc.disk += stat.disk;
                     self.prealloc.uncomp += stat.uncomp;
                 }
@@ -102,7 +106,7 @@ impl CompsizeStat {
         // total
         self.write_total(f, scale)?;
         // normal
-        let mut write_stat = |name, s: &ExtentStat| {
+        let mut write_stat = |name, s: &Stat| {
             if !s.is_empty() {
                 write_table(
                     f,
@@ -138,7 +142,10 @@ impl CompsizeStat {
         writeln!(
             f,
             "Processed {} files, {} regular extents ({} refs), {} inline.",
-            self.nfile, self.nextent, self.nref, self.ninline
+            self.nfile(),
+            self.nextent(),
+            self.nref(),
+            self.ninline(),
         )?;
         write_table(
             f,
