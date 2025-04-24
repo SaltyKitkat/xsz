@@ -1,9 +1,9 @@
 use std::{
     future::Future,
     pin::pin,
-    sync::LazyLock,
-    task::{Context, Poll, Waker},
-    thread::Builder,
+    sync::{Arc, LazyLock},
+    task::{Context, Poll, Wake, Waker},
+    thread::{current, park, Builder, Thread},
 };
 
 use async_task::{Runnable, Task};
@@ -71,16 +71,33 @@ where
                 }
                 Err(e) => eprintln!("{}", e),
             }
-            yield_now().await;
         }
     });
     let mut f = pin!(f);
-    let waker = Waker::noop();
+    let thread = current();
+    struct ThreadWaker(Thread);
+    impl Wake for ThreadWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(ThreadWaker(thread)));
     let mut cx = Context::from_waker(&waker);
+    let mut cnt = 0;
     loop {
         match f.as_mut().poll(&mut cx) {
             Poll::Ready(r) => return r,
-            Poll::Pending => (),
+            Poll::Pending => {
+                cnt += 1;
+                // park the thread when there's no enough work to do
+                // prevent it from spinning and use a lot of cpu
+                // 32 is just some random number
+                // this is not that correct, but it can work
+                if cnt >= 32 {
+                    cnt = 0;
+                    park();
+                }
+            }
         }
     }
 }

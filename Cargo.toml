@@ -7,7 +7,7 @@ edition = "2021"
 async-task = "4.7.1"
 futures-lite = "2.6.0"
 just-getopt = "1.4.1"
-kanal = "0.1.0"
+kanal = { version = "0.1.0", features = [ "std-mutex" ] }
 mimalloc = "0.1.44"
 nohash = "0.2.0"
 rustix = { version = "1.0.3", features = [ "fs" ] }
