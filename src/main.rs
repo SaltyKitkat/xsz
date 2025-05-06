@@ -1,5 +1,6 @@
 use std::{future::Future, process::exit};
 
+use collector::CollectorMsg;
 use executor::block_on;
 use fs_util::File_;
 use kanal::bounded_async as bounded;
@@ -28,7 +29,7 @@ fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
 
 fn main() {
     let collector = collector::Collector::new();
-    let (s, r) = bounded(32);
+    let (s, r) = bounded(4 * 1024 / size_of::<CollectorMsg>());
     collector.start(s, &config().args);
     block_on(collector.run(r));
     if get_err().is_err() {

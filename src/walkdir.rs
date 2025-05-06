@@ -141,7 +141,7 @@ impl WalkDir {
         if global_joblist.is_empty() {
             return;
         }
-        let (sender, rx) = bounded(nwalker as _);
+        let (sender, rx) = bounded(4 * 1024 / size_of::<WalkDirMsg>());
         let walkers = (0..nwalker)
             .map(|i| {
                 let walker = Walker::new(i, sender.clone(), file_consumer());
@@ -180,8 +180,8 @@ impl WalkDir {
         while !self.pending_walkers.is_empty() && !self.global_joblist.is_empty() {
             let chunk = self.global_joblist.get_n_jobs(MAX_LOCAL_LEN / 2).unwrap();
             let id = self.pending_walkers.pop().unwrap();
-            let addr = &self.walkers[id as usize];
-            addr.send(WalkerMsg { chunk }).await.ok();
+            let walker = &self.walkers[id as usize];
+            walker.send(WalkerMsg { chunk }).await.ok();
         }
     }
 }

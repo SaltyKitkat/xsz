@@ -18,7 +18,7 @@ where
     M: Send + 'static,
     Box<[T]>: Into<M>,
 {
-    const SIZE: usize = 1024 * 8 / size_of::<T>();
+    const SIZE: usize = 1024 * 4 / size_of::<T>();
     pub fn new(sender: Sender<M>) -> Self {
         Self {
             inner: Vec::with_capacity(Self::SIZE),

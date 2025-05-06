@@ -30,7 +30,7 @@ impl Collector {
         paths: impl IntoIterator<Item = impl Into<PathBuf>>,
     ) {
         let nworkers = config().jobs;
-        let (worker_tx, worker_rx) = bounded(nworkers as _);
+        let (worker_tx, worker_rx) = bounded(4 * 1024 / size_of::<<Worker as Actor>::Message>());
         pub(crate) struct F(TaskPak<File_, <Worker as Actor>::Message>);
         impl FileConsumer for F {
             fn consume(

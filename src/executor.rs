@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_task::{Runnable, Task};
-use futures_lite::{future::yield_now, FutureExt};
+use futures_lite::FutureExt;
 use kanal::{unbounded, Receiver, Sender};
 
 use crate::global::config;
