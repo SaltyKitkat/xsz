@@ -55,7 +55,7 @@ We're looking forward to your contribution and feedback.
 
 ## FAQ
 
-Q: Why you wirte `xsz`?
+Q: Why you write `xsz`?
 
 A: Because `compsize` is so useful for me, but sometimes too slow. I had a try to speed it up, and `xsz` is the result.
    I'm glad that I can get a more than 4x speed up by using `xsz`.
