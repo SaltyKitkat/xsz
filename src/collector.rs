@@ -1,17 +1,10 @@
-use std::{io::stdout, path::PathBuf};
-
-use kanal::{bounded_async as bounded, AsyncSender as Sender};
+use std::io::stdout;
 
 use crate::{
-    actor::{Actor, Runnable as _},
+    actor::Actor,
     btrfs::ExtentInfo,
-    fs_util::File_,
     global::{config, get_err},
     scale::CompsizeStat,
-    spawn,
-    taskpak::TaskPak,
-    walkdir::{FileConsumer, WalkDir},
-    worker::Worker,
 };
 
 pub(crate) struct Collector {
@@ -22,29 +15,6 @@ impl Collector {
     pub(crate) fn new() -> Self {
         Self {
             stat: CompsizeStat::default(),
-        }
-    }
-    pub(crate) fn start(
-        &self,
-        sender: Sender<CollectorMsg>,
-        paths: impl IntoIterator<Item = impl Into<PathBuf>>,
-    ) {
-        let nworkers = config().jobs;
-        let (worker_tx, worker_rx) = bounded(4 * 1024 / size_of::<<Worker as Actor>::Message>());
-        pub(crate) struct F(TaskPak<File_, <Worker as Actor>::Message>);
-        impl FileConsumer for F {
-            fn consume(
-                &mut self,
-                f: File_,
-            ) -> impl std::future::Future<Output = ()> + std::marker::Send {
-                self.0.push(f)
-            }
-        }
-        let fcb = move || F(TaskPak::new(worker_tx.clone()));
-        WalkDir::spawn(fcb, paths, nworkers);
-        for _ in 0..nworkers {
-            let worker = Worker::new(sender.clone());
-            spawn(worker.run(worker_rx.clone()));
         }
     }
 }

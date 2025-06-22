@@ -17,7 +17,6 @@ use rustix::{
 
 use crate::{
     actor::{Actor, Runnable as _},
-    executor::block_on,
     fs_util::{get_dev, DevId},
     global::{config, get_err},
     spawn, File_,
@@ -156,8 +155,10 @@ impl WalkDir {
             global_joblist,
             walkers,
         };
-        block_on(self_.job_balance());
-        spawn(self_.run(rx));
+        spawn(async {
+            self_.job_balance().await;
+            self_.run(rx).await;
+        });
     }
 
     fn cleanup(&mut self) {
