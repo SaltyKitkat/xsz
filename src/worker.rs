@@ -2,7 +2,7 @@ use kanal::AsyncSender as Sender;
 
 use crate::{
     actor::Actor,
-    btrfs::{ExtentInfo, Sv2Args},
+    btrfs::{ioctl::Sv2Args, ExtentInfo},
     collector::CollectorMsg,
     fs_util::File_,
     global::{get_err, set_err},

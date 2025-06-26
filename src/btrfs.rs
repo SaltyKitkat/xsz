@@ -1,37 +1,15 @@
 use std::{fmt::Display, iter::FusedIterator, mem::transmute, os::fd::BorrowedFd};
 
+use ioctl::{SearchHeader, Sv2Args, BTRFS_IOCTL_SEARCH_V2};
 use rustix::{
     io::Errno,
-    ioctl::{ioctl, opcode, Opcode, Updater},
+    ioctl::{ioctl, Updater},
 };
 
-pub const BTRFS_IOCTL_MAGIC: u8 = 0x94;
-pub const BTRFS_EXTENT_DATA_KEY: u32 = 108;
-pub const BTRFS_IOCTL_SEARCH_V2: Opcode = opcode::read_write::<Sv2Args>(BTRFS_IOCTL_MAGIC, 17);
+pub mod ioctl;
+pub mod tree;
 
-// le on disk
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(C)]
-pub struct IoctlSearchHeader {
-    transid: u64,
-    objectid: u64,
-    offset: u64,
-    r#type: u32,
-    len: u32,
-}
-impl IoctlSearchHeader {
-    unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let raw = &*buf.as_ptr().cast::<Self>();
-        Self {
-            transid: u64::from_le(raw.transid),
-            objectid: u64::from_le(raw.objectid),
-            offset: u64::from_le(raw.offset),
-            r#type: u32::from_le(raw.r#type),
-            len: u32::from_le(raw.len),
-        }
-    }
-}
-
+// le on disk and eb
 #[derive(Clone, Copy)]
 #[repr(packed)]
 struct FileExtentHeader {
@@ -109,7 +87,7 @@ impl FileExtent {
 
 #[repr(packed)]
 pub struct IoctlSearchItem {
-    pub(self) header: IoctlSearchHeader,
+    pub(self) header: SearchHeader,
     pub(self) item: FileExtent,
 }
 
@@ -210,8 +188,8 @@ impl ExtentInfo {
 
 impl IoctlSearchItem {
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let header = IoctlSearchHeader::from_le_raw(&buf[..size_of::<IoctlSearchHeader>()]);
-        let item = FileExtent::from_le_raw(&buf[size_of::<IoctlSearchHeader>()..]);
+        let header = SearchHeader::from_raw(&buf[..size_of::<SearchHeader>()]);
+        let item = FileExtent::from_le_raw(&buf[size_of::<SearchHeader>()..]);
         Self { header, item }
     }
     pub fn parse(&self) -> Result<Option<ExtentInfo>, String> {
@@ -270,87 +248,6 @@ impl IoctlSearchItem {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(C)]
-pub struct IoctlSearchKey {
-    tree_id: u64,
-    min_objectid: u64,
-    max_objectid: u64,
-    min_offset: u64,
-    max_offset: u64,
-    min_transid: u64,
-    max_transid: u64,
-    min_type: u32,
-    max_type: u32,
-    nr_items: u32,
-    unused: u32,
-    unused1: u64,
-    unused2: u64,
-    unused3: u64,
-    unused4: u64,
-}
-
-impl IoctlSearchKey {
-    fn new(st_ino: u64) -> Self {
-        Self {
-            tree_id: 0,
-            min_objectid: st_ino,
-            max_objectid: st_ino,
-            min_offset: 0,
-            max_offset: u64::MAX,
-            min_transid: 0,
-            max_transid: u64::MAX,
-            min_type: BTRFS_EXTENT_DATA_KEY,
-            max_type: BTRFS_EXTENT_DATA_KEY,
-            nr_items: u32::MAX,
-            unused: 0,
-            unused1: 0,
-            unused2: 0,
-            unused3: 0,
-            unused4: 0,
-        }
-    }
-    fn init(&mut self, st_ino: u64) {
-        self.tree_id = 0;
-        self.min_objectid = st_ino;
-        self.max_objectid = st_ino;
-        self.min_offset = 0;
-        self.max_offset = u64::MAX;
-        self.min_transid = 0;
-        self.max_transid = u64::MAX;
-        self.min_type = BTRFS_EXTENT_DATA_KEY;
-        self.max_type = BTRFS_EXTENT_DATA_KEY;
-        self.nr_items = u32::MAX;
-    }
-}
-
-// should be reused for different files
-#[derive(Debug, PartialEq, Eq, Hash)]
-#[repr(C)]
-pub struct Sv2Args {
-    key: IoctlSearchKey,
-    buf_size: u64,
-    buf: [u8; 65536],
-}
-
-impl Sv2Args {
-    pub fn new() -> Self {
-        Self {
-            key: IoctlSearchKey::new(0),
-            buf_size: 65536,
-            buf: [0; 65536],
-        }
-    }
-
-    fn set_key(&mut self, ino: u64) {
-        self.key.init(ino);
-    }
-
-    pub fn search_file<'fd>(&mut self, fd: BorrowedFd<'fd>, ino: u64) -> Sv2ItemIter<'_, 'fd> {
-        self.set_key(ino);
-        Sv2ItemIter::new(self, fd)
-    }
-}
 #[derive(Debug)]
 pub struct Sv2ItemIter<'arg, 'fd> {
     sv2_arg: &'arg mut Sv2Args,
@@ -371,12 +268,12 @@ impl Iterator for Sv2ItemIter<'_, '_> {
         if self.finish() {
             return None;
         }
-        let ret = unsafe { IoctlSearchItem::from_le_raw(&self.sv2_arg.buf[self.pos..]) };
-        self.pos += size_of::<IoctlSearchHeader>() + ret.header.len as usize;
+        let ret = unsafe { IoctlSearchItem::from_le_raw(&self.sv2_arg.buf()[self.pos..]) };
+        self.pos += size_of::<SearchHeader>() + ret.header.len as usize;
         self.nrest_item -= 1;
         if self.need_ioctl() {
-            self.sv2_arg.key.min_offset = ret.header.offset + 1;
-            self.sv2_arg.key.nr_items = u32::MAX;
+            self.sv2_arg.key_mut().min_offset = ret.header.offset + 1;
+            self.sv2_arg.key_mut().nr_items = u32::MAX;
         }
         Some(Ok(ret))
     }
@@ -398,7 +295,7 @@ impl<'arg, 'fd> Sv2ItemIter<'arg, 'fd> {
             let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(self.sv2_arg);
             ioctl(&self.fd, ctl)?;
         }
-        self.nrest_item = self.sv2_arg.key.nr_items;
+        self.nrest_item = self.sv2_arg.key_mut().nr_items;
         self.last = self.nrest_item <= 512;
         self.pos = 0;
         Ok(())
@@ -410,8 +307,8 @@ impl<'arg, 'fd> Sv2ItemIter<'arg, 'fd> {
         self.nrest_item == 0 && self.last
     }
     pub fn new(sv2_arg: &'arg mut Sv2Args, fd: BorrowedFd<'fd>) -> Self {
-        sv2_arg.key.nr_items = u32::MAX;
-        sv2_arg.key.min_offset = 0;
+        sv2_arg.key_mut().nr_items = u32::MAX;
+        sv2_arg.key_mut().min_offset = 0;
         // other fields not reset, maybe wrong?
         Self {
             sv2_arg,

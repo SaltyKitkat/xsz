@@ -75,28 +75,25 @@ where
     });
     let mut f = pin!(f);
     let thread = current();
-    struct ThreadWaker(Thread);
+    struct ThreadWaker {
+        thread: Thread,
+    }
     impl Wake for ThreadWaker {
         fn wake(self: Arc<Self>) {
-            self.0.unpark();
+            self.thread.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.thread.unpark();
         }
     }
-    let waker = Waker::from(Arc::new(ThreadWaker(thread)));
+    let inner = Arc::new(ThreadWaker { thread });
+    let waker = Waker::from(inner.clone());
     let mut cx = Context::from_waker(&waker);
-    let mut cnt = 0;
     loop {
         match f.as_mut().poll(&mut cx) {
             Poll::Ready(r) => return r,
             Poll::Pending => {
-                cnt += 1;
-                // park the thread when there's no enough work to do
-                // prevent it from spinning and use a lot of cpu
-                // 32 is just some random number
-                // this is not that correct, but it can work
-                if cnt >= 32 {
-                    cnt = 0;
-                    park();
-                }
+                park();
             }
         }
     }
