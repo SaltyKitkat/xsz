@@ -64,7 +64,7 @@ impl IoctlSearchKey {
 #[derive(Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub struct Sv2Args {
-    key: IoctlSearchKey,
+    pub key: IoctlSearchKey,
     buf_size: u64,
     buf: [u8; 65536],
 }
@@ -87,12 +87,8 @@ impl Sv2Args {
         Sv2ItemIter::new(self, fd)
     }
 
-    pub fn buf(&self) -> [u8; 65536] {
-        self.buf
-    }
-
-    pub fn key_mut(&mut self) -> &mut IoctlSearchKey {
-        &mut self.key
+    pub fn buf(&self) -> &[u8; 65536] {
+        &self.buf
     }
 }
 
@@ -107,7 +103,6 @@ pub struct SearchHeader {
 }
 impl SearchHeader {
     pub unsafe fn from_raw(buf: &[u8]) -> Self {
-        let raw = buf.as_ptr().cast::<Self>();
-        raw.read_unaligned()
+        buf.as_ptr().cast::<Self>().read()
     }
 }

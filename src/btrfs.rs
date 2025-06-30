@@ -12,16 +12,21 @@ pub mod tree;
 // le on disk and eb
 #[derive(Clone, Copy)]
 #[repr(packed)]
-struct FileExtentHeader {
+struct FileExtent {
     pub generation: u64,
     pub ram_bytes: u64,
     pub compression: u8,
     pub encryption: u8,
     pub other_encoding: u16,
     pub r#type: u8,
+    // inline data start here
+    pub disk_bytenr: u64,
+    pub disk_num_bytes: u64,
+    pub offset: u64,
+    pub num_bytes: u64,
 }
 
-impl FileExtentHeader {
+impl FileExtent {
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
         let raw = &*buf.as_ptr().cast::<Self>();
         Self {
@@ -31,57 +36,17 @@ impl FileExtentHeader {
             encryption: u8::from_le(raw.encryption),
             other_encoding: u16::from_le(raw.other_encoding),
             r#type: u8::from_le(raw.r#type),
-        }
-    }
-    fn is_inline(&self) -> bool {
-        ExtentType::Inline == ExtentType::from_u8(self.r#type)
-    }
-}
-#[derive(Clone, Copy)]
-#[repr(packed)]
-struct Meta {
-    pub disk_bytenr: u64,
-    pub disk_num_bytes: u64,
-    pub offset: u64,
-    pub num_bytes: u64,
-}
-
-impl Meta {
-    unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let raw = &*buf.as_ptr().cast::<Self>();
-        Self {
             disk_bytenr: u64::from_le(raw.disk_bytenr),
             disk_num_bytes: u64::from_le(raw.disk_num_bytes),
             offset: u64::from_le(raw.offset),
             num_bytes: u64::from_le(raw.num_bytes),
         }
     }
-}
-#[derive(Clone, Copy)]
-union DataOrMeta {
-    data: (),
-    meta: Meta,
-}
-// le on disk
-#[derive(Clone, Copy)]
-#[repr(packed)]
-pub struct FileExtent {
-    pub(self) header: FileExtentHeader,
-    pub(self) tail: DataOrMeta,
-}
-impl FileExtent {
-    unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let mut ret = Self {
-            header: FileExtentHeader::from_le_raw(buf),
-            tail: DataOrMeta { data: () },
-        };
-        if ret.header.is_inline() {
-            return ret;
-        }
-        ret.tail = DataOrMeta {
-            meta: Meta::from_le_raw(&buf[size_of_val(&ret.header)..]),
-        };
-        ret
+    const fn inline_header_size() -> usize {
+        8 + 8 + 1 + 1 + 2 + 1
+    }
+    fn is_inline(&self) -> bool {
+        ExtentType::Inline == ExtentType::from_u8(self.r#type)
     }
 }
 
@@ -194,13 +159,13 @@ impl IoctlSearchItem {
     }
     pub fn parse(&self) -> Result<Option<ExtentInfo>, String> {
         let hlen = self.header.len;
-        let ram_bytes = self.item.header.ram_bytes;
-        let compression = Compression::from_u8(self.item.header.compression);
-        let r#type = ExtentType::from_u8(self.item.header.r#type);
+        let ram_bytes = self.item.ram_bytes;
+        let compression = Compression::from_u8(self.item.compression);
+        let r#type = ExtentType::from_u8(self.item.r#type);
         let objectid = self.header.objectid;
         let offset = self.header.offset;
-        if self.item.header.is_inline() {
-            let disk_num_bytes = hlen as u64 - size_of_val(&self.item.header) as u64;
+        if self.item.is_inline() {
+            let disk_num_bytes = hlen as u64 - FileExtent::inline_header_size() as u64;
             return Ok(Some(ExtentInfo {
                 objectid,
                 offset,
@@ -214,12 +179,11 @@ impl IoctlSearchItem {
                 },
             }));
         }
-        let meta = unsafe { &self.item.tail.meta };
         if hlen != size_of::<FileExtent>() as u32 {
             let errmsg = format!("Regular extent's header not 53 bytes ({}) long?!?", hlen);
             return Err(errmsg);
         }
-        let disk_bytenr = meta.disk_bytenr;
+        let disk_bytenr = self.item.disk_bytenr;
         // is hole
         if disk_bytenr == 0 {
             return Ok(None);
@@ -231,8 +195,8 @@ impl IoctlSearchItem {
         }
 
         let disk_bytenr = disk_bytenr >> 12;
-        let disk_bytes = meta.disk_num_bytes;
-        let refd_bytes = meta.num_bytes;
+        let disk_bytes = self.item.disk_num_bytes;
+        let refd_bytes = self.item.num_bytes;
         Ok(Some(ExtentInfo {
             objectid,
             offset,
@@ -272,8 +236,8 @@ impl Iterator for Sv2ItemIter<'_, '_> {
         self.pos += size_of::<SearchHeader>() + ret.header.len as usize;
         self.nrest_item -= 1;
         if self.need_ioctl() {
-            self.sv2_arg.key_mut().min_offset = ret.header.offset + 1;
-            self.sv2_arg.key_mut().nr_items = u32::MAX;
+            self.sv2_arg.key.min_offset = ret.header.offset + 1;
+            self.sv2_arg.key.nr_items = u32::MAX;
         }
         Some(Ok(ret))
     }
@@ -295,7 +259,7 @@ impl<'arg, 'fd> Sv2ItemIter<'arg, 'fd> {
             let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(self.sv2_arg);
             ioctl(&self.fd, ctl)?;
         }
-        self.nrest_item = self.sv2_arg.key_mut().nr_items;
+        self.nrest_item = self.sv2_arg.key.nr_items;
         self.last = self.nrest_item <= 512;
         self.pos = 0;
         Ok(())
@@ -307,8 +271,8 @@ impl<'arg, 'fd> Sv2ItemIter<'arg, 'fd> {
         self.nrest_item == 0 && self.last
     }
     pub fn new(sv2_arg: &'arg mut Sv2Args, fd: BorrowedFd<'fd>) -> Self {
-        sv2_arg.key_mut().nr_items = u32::MAX;
-        sv2_arg.key_mut().min_offset = 0;
+        sv2_arg.key.nr_items = u32::MAX;
+        sv2_arg.key.min_offset = 0;
         // other fields not reset, maybe wrong?
         Self {
             sv2_arg,
