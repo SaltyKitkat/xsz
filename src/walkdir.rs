@@ -140,7 +140,7 @@ impl WalkDir {
         if global_joblist.is_empty() {
             return;
         }
-        let (sender, rx) = bounded(4 * 1024 / size_of::<WalkDirMsg>());
+        let (sender, rx) = bounded(64);
         let walkers = (0..nwalker)
             .map(|i| {
                 let walker = Walker::new(i, sender.clone(), file_consumer());

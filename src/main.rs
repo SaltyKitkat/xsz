@@ -1,6 +1,5 @@
 use std::{future::Future, process::exit};
 
-use collector::CollectorMsg;
 use executor::block_on;
 use fs_util::File_;
 use kanal::bounded_async as bounded;
@@ -32,8 +31,8 @@ fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
 
 fn main() {
     let nworkers = config().jobs;
-    let (worker_tx, worker_rx) = bounded(4 * 1024 / size_of::<<Worker as Actor>::Message>());
-    let (sender, r) = bounded(4 * 1024 / size_of::<CollectorMsg>());
+    let (worker_tx, worker_rx) = bounded(64);
+    let (sender, r) = bounded(64);
     pub(crate) struct F(TaskPak<File_, <Worker as Actor>::Message>);
     impl FileConsumer for F {
         fn consume(
