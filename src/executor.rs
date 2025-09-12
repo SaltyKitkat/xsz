@@ -92,9 +92,7 @@ where
     loop {
         match f.as_mut().poll(&mut cx) {
             Poll::Ready(r) => return r,
-            Poll::Pending => {
-                park();
-            }
+            Poll::Pending => park(),
         }
     }
 }
