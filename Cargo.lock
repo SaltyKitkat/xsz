@@ -22,9 +22,9 @@ checksum = "2261d10cca569e4643e526d8dc2e62e433cc8aba21ab764233731f8d369bf394"
 
 [[package]]
 name = "cc"
-version = "1.2.37"
+version = "1.2.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65193589c6404eb80b450d618eaf9a2cafaaafd57ecce47370519ef674a7bd44"
+checksum = "80f41ae168f955c12fb8960b057d70d0ca153fb83182b57d86380443527be7e9"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -48,9 +48,9 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fd99930f64d146689264c637b5af2f0233a933bef0d8570e2526bf9e083192d"
+checksum = "1ced73b1dacfc750a6db6c0a0c3a3853c8b41997e2e2c563dc90804ae6867959"
 
 [[package]]
 name = "futures-core"
@@ -154,8 +154,9 @@ checksum = "63eceb7b5d757011a87d08eb2123db15d87fb0c281f65d101ce30a1e96c3ad5c"
 
 [[package]]
 name = "palc"
-version = "0.0.1"
-source = "git+https://github.com/oxalica/palc#1cc6b0056f15ba7b7286f82e795ced8763467149"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aec926238fe280c9d5ad6162851511ba1cf55baec4b24cd48a66a18d811bb4d"
 dependencies = [
  "os_str_bytes",
  "palc-derive",
@@ -164,8 +165,9 @@ dependencies = [
 
 [[package]]
 name = "palc-derive"
-version = "0.0.1"
-source = "git+https://github.com/oxalica/palc#1cc6b0056f15ba7b7286f82e795ced8763467149"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6ad802ed8080f568aa68b6fc6047f80264a6723efc0f11436f639b16a3c8bd0"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -282,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "xsz"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-task",
  "futures-lite",
