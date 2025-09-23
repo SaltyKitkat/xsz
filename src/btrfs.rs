@@ -1,4 +1,7 @@
-use std::{fmt::Display, iter::FusedIterator, mem::transmute, os::fd::BorrowedFd};
+use std::{
+    fmt::Display, iter::FusedIterator, marker::PhantomData,
+    mem::transmute, os::fd::BorrowedFd,
+};
 
 use ioctl::{SearchHeader, Sv2Args, BTRFS_IOCTL_SEARCH_V2};
 use rustix::{
@@ -6,13 +9,18 @@ use rustix::{
     ioctl::{ioctl, Updater},
 };
 
+use crate::btrfs::tree::Key;
+
 pub mod ioctl;
 pub mod tree;
 
+pub trait FromRaw {
+    fn raw_size(&self) -> u32;
+    unsafe fn from_le_raw(buf: &[u8]) -> Self;
+}
+
 // le on disk and eb
-#[derive(Clone, Copy)]
-#[repr(packed)]
-struct FileExtent {
+pub struct FileExtent {
     pub generation: u64,
     pub ram_bytes: u64,
     pub compression: u8,
@@ -27,21 +35,6 @@ struct FileExtent {
 }
 
 impl FileExtent {
-    unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let raw = &*buf.as_ptr().cast::<Self>();
-        Self {
-            generation: u64::from_le(raw.generation),
-            ram_bytes: u64::from_le(raw.ram_bytes),
-            compression: u8::from_le(raw.compression),
-            encryption: u8::from_le(raw.encryption),
-            other_encoding: u16::from_le(raw.other_encoding),
-            r#type: u8::from_le(raw.r#type),
-            disk_bytenr: u64::from_le(raw.disk_bytenr),
-            disk_num_bytes: u64::from_le(raw.disk_num_bytes),
-            offset: u64::from_le(raw.offset),
-            num_bytes: u64::from_le(raw.num_bytes),
-        }
-    }
     const fn inline_header_size() -> usize {
         8 + 8 + 1 + 1 + 2 + 1
     }
@@ -50,10 +43,62 @@ impl FileExtent {
     }
 }
 
-#[repr(packed)]
-pub struct IoctlSearchItem {
+impl FromRaw for FileExtent {
+    fn raw_size(&self) -> u32 {
+        8 + 8 + 1 + 1 + 2 + 1 + 8 * 4
+    }
+    unsafe fn from_le_raw(buf: &[u8]) -> Self {
+        let mut ptr = buf.as_ptr() as *const u8;
+        unsafe {
+            let generation = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let ram_bytes = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let compression = ptr.cast::<u8>().read_unaligned().to_le();
+            ptr = ptr.add(1);
+            let encryption = ptr.cast::<u8>().read_unaligned().to_le();
+            ptr = ptr.add(1);
+            let other_encoding = ptr.cast::<u16>().read_unaligned().to_le();
+            ptr = ptr.add(2);
+            let r#type = ptr.cast::<u8>().read_unaligned().to_le();
+            ptr = ptr.add(1);
+            let disk_bytenr = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let disk_num_bytes = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let offset = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let num_bytes = ptr.cast::<u64>().read_unaligned().to_le();
+            let ret = Self {
+                generation,
+                ram_bytes,
+                compression,
+                encryption,
+                other_encoding,
+                r#type,
+                disk_bytenr,
+                disk_num_bytes,
+                offset,
+                num_bytes,
+            };
+            assert!(buf.len() >= ret.raw_size() as usize);
+            ret
+        }
+    }
+}
+
+pub struct DirItem {
+    key: Key,
+    transid: u64,
+    data_len: u16,
+    // name_len: u16,
+    r#type: u8,
+    name: String,
+}
+
+pub struct IoctlSearchItem<T> {
     pub(self) header: SearchHeader,
-    pub(self) item: FileExtent,
+    pub(self) item: T,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -151,12 +196,15 @@ impl ExtentInfo {
     }
 }
 
-impl IoctlSearchItem {
+impl<T: FromRaw> IoctlSearchItem<T> {
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
         let header = SearchHeader::from_raw(&buf[..size_of::<SearchHeader>()]);
-        let item = FileExtent::from_le_raw(&buf[size_of::<SearchHeader>()..]);
+        let item = T::from_le_raw(&buf[size_of::<SearchHeader>()..]);
         Self { header, item }
     }
+}
+
+impl IoctlSearchItem<FileExtent> {
     pub fn parse(&self) -> Result<Option<ExtentInfo>, String> {
         let hlen = self.header.len;
         let ram_bytes = self.item.ram_bytes;
@@ -179,7 +227,7 @@ impl IoctlSearchItem {
                 },
             }));
         }
-        if hlen != size_of::<FileExtent>() as u32 {
+        if hlen != self.item.raw_size() {
             let errmsg = format!("Regular extent's header not 53 bytes ({}) long?!?", hlen);
             return Err(errmsg);
         }
@@ -213,15 +261,16 @@ impl IoctlSearchItem {
 }
 
 #[derive(Debug)]
-pub struct Sv2ItemIter<'arg, 'fd> {
+pub struct Sv2ItemIter<'arg, 'fd, T> {
     sv2_arg: &'arg mut Sv2Args,
     fd: BorrowedFd<'fd>,
     pos: usize,
     nrest_item: u32,
     last: bool,
+    _phantom: PhantomData<T>,
 }
-impl Iterator for Sv2ItemIter<'_, '_> {
-    type Item = Result<IoctlSearchItem, Errno>;
+impl<T: FromRaw> Iterator for Sv2ItemIter<'_, '_, T> {
+    type Item = Result<IoctlSearchItem<T>, Errno>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.need_ioctl() {
@@ -252,8 +301,8 @@ impl Iterator for Sv2ItemIter<'_, '_> {
         )
     }
 }
-impl FusedIterator for Sv2ItemIter<'_, '_> {}
-impl<'arg, 'fd> Sv2ItemIter<'arg, 'fd> {
+impl<T: FromRaw> FusedIterator for Sv2ItemIter<'_, '_, T> {}
+impl<'arg, 'fd, T> Sv2ItemIter<'arg, 'fd, T> {
     fn call_ioctl(&mut self) -> Result<(), Errno> {
         unsafe {
             let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(self.sv2_arg);
@@ -280,6 +329,7 @@ impl<'arg, 'fd> Sv2ItemIter<'arg, 'fd> {
             pos: 0,
             nrest_item: 0,
             last: false,
+            _phantom: PhantomData,
         }
     }
 }

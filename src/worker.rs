@@ -2,7 +2,9 @@ use kanal::AsyncSender as Sender;
 
 use crate::{
     actor::Actor,
-    btrfs::{ioctl::Sv2Args, ExtentInfo},
+    btrfs::{
+        ioctl::{IoctlSearchKey, Sv2Args}, tree, ExtentInfo, Sv2ItemIter
+    },
     collector::CollectorMsg,
     fs_util::File_,
     global::{get_err, set_err},
@@ -21,13 +23,25 @@ impl Worker {
         Self {
             collector: TaskPak::new(collector),
             nfile: 0,
-            sv2_args: Sv2Args::new(),
+            sv2_args: Sv2Args::from_sk(IoctlSearchKey::new(
+                0,
+                0,
+                0,
+                0,
+                u64::MAX,
+                0,
+                u64::MAX,
+                tree::r#type::EXTENT_DATA,
+                tree::r#type::EXTENT_DATA,
+            )),
         }
     }
 
     pub(crate) async fn handle_file(&mut self, f: File_) -> Result<(), ()> {
         self.nfile += 1;
-        let iter = self.sv2_args.search_file(f.borrow_fd(), f.ino());
+        self.sv2_args.key.min_objectid = f.ino();
+        self.sv2_args.key.max_objectid = f.ino();
+        let iter = Sv2ItemIter::new(&mut self.sv2_args, f.borrow_fd());
         for extent in iter {
             let extent = match extent {
                 Ok(extent) => extent,

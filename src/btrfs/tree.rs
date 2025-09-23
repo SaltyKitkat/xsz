@@ -1,178 +1,148 @@
-#[repr(u64)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BtrfsObjectId {
-    RootTree = 1,
-    ExtentTree = 2,
-    ChunkTree = 3,
-    DevTree = 4,
-    FsTree = 5,
-    RootTreeDir = 6,
-    CsumTree = 7,
-    QuotaTree = 8,
-    UuidTree = 9,
-    FreeSpaceTree = 10,
-    BlockGroupTree = 11,
-    RaidStripeTree = 12,
-
-    Balance = -4 as _,
-    Orphan = -5 as _,
-    TreeLog = -6 as _,
-    TreeLogFixup = -7 as _,
-    TreeReloc = -8 as _,
-    DataRelocTree = -9 as _,
-    ExtentCsum = -10 as _,
-    FreeSpace = -11 as _,
-    FreeIno = -12 as _,
+#[repr(packed)]
+pub struct Key {
+    pub objectid: u64,
+    pub r#type: u8,
+    pub offset: u64,
 }
 
-impl BtrfsObjectId {
-    pub fn from_i64(id: i64) -> Option<Self> {
-        use BtrfsObjectId::*;
-        Some(match id {
-            1 => RootTree,
-            2 => ExtentTree,
-            3 => ChunkTree,
-            4 => DevTree,
-            5 => FsTree,
-            6 => RootTreeDir,
-            7 => CsumTree,
-            8 => QuotaTree,
-            9 => UuidTree,
-            10 => FreeSpaceTree,
-            11 => BlockGroupTree,
-            12 => RaidStripeTree,
+pub mod objectid {
+    #![allow(dead_code)]
+    pub const ROOT_TREE: u64 = 1;
+    pub const EXTENT_TREE: u64 = 2;
+    pub const CHUNK_TREE: u64 = 3;
+    pub const DEV_TREE: u64 = 4;
+    pub const FS_TREE: u64 = 5;
+    pub const ROOT_TREE_DIR: u64 = 6;
+    pub const CSUM_TREE: u64 = 7;
+    pub const QUOTA_TREE: u64 = 8;
+    pub const UUID_TREE: u64 = 9;
+    pub const FREE_SPACE_TREE: u64 = 10;
+    pub const BLOCK_GROUP_TREE: u64 = 11;
+    pub const RAID_STRIPE_TREE: u64 = 12;
+    pub const BALANCE: u64 = -4i64 as u64;
+    pub const ORPHAN: u64 = -5i64 as u64;
+    pub const TREE_LOG: u64 = -6i64 as u64;
+    pub const TREE_LOG_FIXUP: u64 = -7i64 as u64;
+    pub const TREE_RELOC: u64 = -8i64 as u64;
+    pub const DATA_RELOC_TREE: u64 = -9i64 as u64;
+    pub const EXTENT_CSUM: u64 = -10i64 as u64;
+    pub const FREE_SPACE: u64 = -11i64 as u64;
+    pub const FREE_INO: u64 = -12i64 as u64;
 
-            -4 => Balance,
-            -5 => Orphan,
-            -6 => TreeLog,
-            -7 => TreeLogFixup,
-            -8 => TreeReloc,
-            -9 => DataRelocTree,
-            -10 => ExtentCsum,
-            -11 => FreeSpace,
-            -12 => FreeIno,
-
+    pub fn name(objectid: u64) -> Option<&'static str> {
+        Some(match objectid {
+            ROOT_TREE => "ROOT_TREE",
+            EXTENT_TREE => "EXTENT_TREE",
+            CHUNK_TREE => "CHUNK_TREE",
+            DEV_TREE => "DEV_TREE",
+            FS_TREE => "FS_TREE",
+            ROOT_TREE_DIR => "ROOT_TREE_DIR",
+            CSUM_TREE => "CSUM_TREE",
+            QUOTA_TREE => "QUOTA_TREE",
+            UUID_TREE => "UUID_TREE",
+            FREE_SPACE_TREE => "FREE_SPACE_TREE",
+            BLOCK_GROUP_TREE => "BLOCK_GROUP_TREE",
+            RAID_STRIPE_TREE => "RAID_STRIPE_TREE",
+            BALANCE => "BALANCE",
+            ORPHAN => "ORPHAN",
+            TREE_LOG => "TREE_LOG",
+            TREE_LOG_FIXUP => "TREE_LOG_FIXUP",
+            TREE_RELOC => "TREE_RELOC",
+            DATA_RELOC_TREE => "DATA_RELOC_TREE",
+            EXTENT_CSUM => "EXTENT_CSUM",
+            FREE_SPACE => "FREE_SPACE",
+            FREE_INO => "FREE_INO",
             _ => return None,
         })
     }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::RootTree => "ROOT_TREE",
-            Self::ExtentTree => "EXTENT_TREE",
-            Self::ChunkTree => "CHUNK_TREE",
-            Self::DevTree => "DEV_TREE",
-            Self::FsTree => "FS_TREE",
-            Self::RootTreeDir => "ROOT_TREE_DIR",
-            Self::CsumTree => "CSUM_TREE",
-            Self::QuotaTree => "QUOTA_TREE",
-            Self::UuidTree => "UUID_TREE",
-            Self::FreeSpaceTree => "FREE_SPACE_TREE",
-            Self::BlockGroupTree => "BLOCK_GROUP_TREE",
-            Self::RaidStripeTree => "RAID_STRIPE_TREE",
-            Self::Balance => "BALANCE",
-            Self::Orphan => "ORPHAN",
-            Self::TreeLog => "TREE_LOG",
-            Self::TreeLogFixup => "TREE_LOG_FIXUP",
-            Self::TreeReloc => "TREE_RELOC",
-            Self::DataRelocTree => "DATA_RELOC_TREE",
-            Self::ExtentCsum => "EXTENT_CSUM",
-            Self::FreeSpace => "FREE_SPACE",
-            Self::FreeIno => "FREE_INO",
-        }
-    }
-}
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BtrfsKeyType {
-    InodeItem = 1,
-    InodeRef = 12,
-    InodeExtref = 13,
-    XattrItem = 24,
-    VerityDescItem = 36,
-    VerityMerkleItem = 37,
-    OrphanItem = 48,
-    DirLogItem = 60,
-    DirLogIndex = 72,
-    DirItem = 84,
-    DirIndex = 96,
-    ExtentData = 108,
-    ExtentCsum = 128,
-    RootItem = 132,
-    RootBackref = 144,
-    RootRef = 156,
-    ExtentItem = 168,
-    MetadataItem = 169,
-    ExtentOwnerRef = 172,
-    TreeBlockRef = 176,
-    ExtentDataRef = 178,
-    SharedBlockRef = 182,
-    SharedDataRef = 184,
-    BlockGroupItem = 192,
-    FreeSpaceInfo = 198,
-    FreeSpaceExtent = 199,
-    FreeSpaceBitmap = 200,
-    DevExtent = 204,
-    DevItem = 216,
-    ChunkItem = 228,
-    RaidStripe = 230,
-    QgroupStatus = 240,
-    QgroupInfo = 242,
-    QgroupLimit = 244,
-    QgroupRelation = 246,
-    TemporaryItem = 248,
-    PersistentItem = 249,
-    DevReplace = 250,
-    UuidSubvol = 251,
-    UuidReceivedSubvol = 252,
-    StringItem = 253,
 }
 
-impl BtrfsKeyType {
-    pub fn from_u8(value: u8) -> Option<Self> {
-        use BtrfsKeyType::*;
-        Some(match value {
-            1 => InodeItem,
-            12 => InodeRef,
-            13 => InodeExtref,
-            24 => XattrItem,
-            36 => VerityDescItem,
-            37 => VerityMerkleItem,
-            48 => OrphanItem,
-            60 => DirLogItem,
-            72 => DirLogIndex,
-            84 => DirItem,
-            96 => DirIndex,
-            108 => ExtentData,
-            128 => ExtentCsum,
-            132 => RootItem,
-            144 => RootBackref,
-            156 => RootRef,
-            168 => ExtentItem,
-            169 => MetadataItem,
-            172 => ExtentOwnerRef,
-            176 => TreeBlockRef,
-            178 => ExtentDataRef,
-            182 => SharedBlockRef,
-            184 => SharedDataRef,
-            192 => BlockGroupItem,
-            198 => FreeSpaceInfo,
-            199 => FreeSpaceExtent,
-            200 => FreeSpaceBitmap,
-            204 => DevExtent,
-            216 => DevItem,
-            228 => ChunkItem,
-            230 => RaidStripe,
-            240 => QgroupStatus,
-            242 => QgroupInfo,
-            244 => QgroupLimit,
-            246 => QgroupRelation,
-            248 => TemporaryItem,
-            249 => PersistentItem,
-            250 => DevReplace,
-            251 => UuidSubvol,
-            252 => UuidReceivedSubvol,
-            253 => StringItem,
+pub mod r#type {
+    #![allow(dead_code)]
+    pub const INODE_ITEM: u8 = 1;
+    pub const INODE_REF: u8 = 12;
+    pub const INODE_EXTREF: u8 = 13;
+    pub const XATTR_ITEM: u8 = 24;
+    pub const VERITY_DESC_ITEM: u8 = 36;
+    pub const VERITY_MERKLE_ITEM: u8 = 37;
+    pub const ORPHAN_ITEM: u8 = 48;
+    pub const DIR_LOG_ITEM: u8 = 60;
+    pub const DIR_LOG_INDEX: u8 = 72;
+    pub const DIR_ITEM: u8 = 84;
+    pub const DIR_INDEX: u8 = 96;
+    pub const EXTENT_DATA: u8 = 108;
+    pub const EXTENT_CSUM: u8 = 128;
+    pub const ROOT_ITEM: u8 = 132;
+    pub const ROOT_BACKREF: u8 = 144;
+    pub const ROOT_REF: u8 = 156;
+    pub const EXTENT_ITEM: u8 = 168;
+    pub const METADATA_ITEM: u8 = 169;
+    pub const EXTENT_OWNER_REF: u8 = 172;
+    pub const TREE_BLOCK_REF: u8 = 176;
+    pub const EXTENT_DATA_REF: u8 = 178;
+    pub const SHARED_BLOCK_REF: u8 = 182;
+    pub const SHARED_DATA_REF: u8 = 184;
+    pub const BLOCK_GROUP_ITEM: u8 = 192;
+    pub const FREE_SPACE_INFO: u8 = 198;
+    pub const FREE_SPACE_EXTENT: u8 = 199;
+    pub const FREE_SPACE_BITMAP: u8 = 200;
+    pub const DEV_EXTENT: u8 = 204;
+    pub const DEV_ITEM: u8 = 216;
+    pub const CHUNK_ITEM: u8 = 228;
+    pub const RAID_STRIPE: u8 = 230;
+    pub const QGROUP_STATUS: u8 = 240;
+    pub const QGROUP_INFO: u8 = 242;
+    pub const QGROUP_LIMIT: u8 = 244;
+    pub const QGROUP_RELATION: u8 = 246;
+    pub const TEMPORARY_ITEM: u8 = 248;
+    pub const PERSISTENT_ITEM: u8 = 249;
+    pub const DEV_REPLACE: u8 = 250;
+    pub const UUID_SUBVOL: u8 = 251;
+    pub const UUID_RECEIVED_SUBVOL: u8 = 252;
+    pub const STRING_ITEM: u8 = 253;
+    pub fn name(r#type: u8) -> Option<&'static str> {
+        Some(match r#type {
+            INODE_ITEM => "INODE_ITEM",
+            INODE_REF => "INODE_REF",
+            INODE_EXTREF => "INODE_EXTREF",
+            XATTR_ITEM => "XATTR_ITEM",
+            VERITY_DESC_ITEM => "VERITY_DESC_ITEM",
+            VERITY_MERKLE_ITEM => "VERITY_MERKLE_ITEM",
+            ORPHAN_ITEM => "ORPHAN_ITEM",
+            DIR_LOG_ITEM => "DIR_LOG_ITEM",
+            DIR_LOG_INDEX => "DIR_LOG_INDEX",
+            DIR_ITEM => "DIR_ITEM",
+            DIR_INDEX => "DIR_INDEX",
+            EXTENT_DATA => "EXTENT_DATA",
+            EXTENT_CSUM => "EXTENT_CSUM",
+            ROOT_ITEM => "ROOT_ITEM",
+            ROOT_BACKREF => "ROOT_BACKREF",
+            ROOT_REF => "ROOT_REF",
+            EXTENT_ITEM => "EXTENT_ITEM",
+            METADATA_ITEM => "METADATA_ITEM",
+            EXTENT_OWNER_REF => "EXTENT_OWNER_REF",
+            TREE_BLOCK_REF => "TREE_BLOCK_REF",
+            EXTENT_DATA_REF => "EXTENT_DATA_REF",
+            SHARED_BLOCK_REF => "SHARED_BLOCK_REF",
+            SHARED_DATA_REF => "SHARED_DATA_REF",
+            BLOCK_GROUP_ITEM => "BLOCK_GROUP_ITEM",
+            FREE_SPACE_INFO => "FREE_SPACE_INFO",
+            FREE_SPACE_EXTENT => "FREE_SPACE_EXTENT",
+            FREE_SPACE_BITMAP => "FREE_SPACE_BITMAP",
+            DEV_EXTENT => "DEV_EXTENT",
+            DEV_ITEM => "DEV_ITEM",
+            CHUNK_ITEM => "CHUNK_ITEM",
+            RAID_STRIPE => "RAID_STRIPE",
+            QGROUP_STATUS => "QGROUP_STATUS",
+            QGROUP_INFO => "QGROUP_INFO",
+            QGROUP_LIMIT => "QGROUP_LIMIT",
+            QGROUP_RELATION => "QGROUP_RELATION",
+            TEMPORARY_ITEM => "TEMPORARY_ITEM",
+            PERSISTENT_ITEM => "PERSISTENT_ITEM",
+            DEV_REPLACE => "DEV_REPLACE",
+            UUID_SUBVOL => "UUID_SUBVOL",
+            UUID_RECEIVED_SUBVOL => "UUID_RECEIVED_SUBVOL",
+            STRING_ITEM => "STRING_ITEM",
             _ => return None,
         })
     }

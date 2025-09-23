@@ -1,8 +1,4 @@
-use std::os::fd::BorrowedFd;
-
 use rustix::ioctl::{opcode::read_write, Opcode};
-
-use super::{tree::BtrfsKeyType, Sv2ItemIter};
 
 pub const BTRFS_IOCTL_MAGIC: u8 = 0x94;
 pub const BTRFS_IOCTL_SEARCH_V2: Opcode = read_write::<Sv2Args>(BTRFS_IOCTL_MAGIC, 17);
@@ -27,17 +23,27 @@ pub struct IoctlSearchKey {
 }
 
 impl IoctlSearchKey {
-    fn new(st_ino: u64) -> Self {
+    pub fn new(
+        tree_id: u64,
+        min_objectid: u64,
+        max_objectid: u64,
+        min_offset: u64,
+        max_offset: u64,
+        min_transid: u64,
+        max_transid: u64,
+        min_type: u8,
+        max_type: u8,
+    ) -> Self {
         Self {
-            tree_id: 0,
-            min_objectid: st_ino,
-            max_objectid: st_ino,
-            min_offset: 0,
-            max_offset: u64::MAX,
-            min_transid: 0,
-            max_transid: u64::MAX,
-            min_type: BtrfsKeyType::ExtentData as _,
-            max_type: BtrfsKeyType::ExtentData as _,
+            tree_id,
+            min_objectid,
+            max_objectid,
+            min_offset,
+            max_offset,
+            min_transid,
+            max_transid,
+            min_type: min_type as _,
+            max_type: max_type as _,
             nr_items: u32::MAX,
             unused: 0,
             unused1: 0,
@@ -45,18 +51,6 @@ impl IoctlSearchKey {
             unused3: 0,
             unused4: 0,
         }
-    }
-    fn init(&mut self, st_ino: u64) {
-        self.tree_id = 0;
-        self.min_objectid = st_ino;
-        self.max_objectid = st_ino;
-        self.min_offset = 0;
-        self.max_offset = u64::MAX;
-        self.min_transid = 0;
-        self.max_transid = u64::MAX;
-        self.min_type = BtrfsKeyType::ExtentData as _;
-        self.max_type = BtrfsKeyType::ExtentData as _;
-        self.nr_items = u32::MAX;
     }
 }
 
@@ -70,21 +64,12 @@ pub struct Sv2Args {
 }
 
 impl Sv2Args {
-    pub fn new() -> Self {
+    pub fn from_sk(sk: IoctlSearchKey) -> Self {
         Self {
-            key: IoctlSearchKey::new(0),
+            key: sk,
             buf_size: 65536,
             buf: [0; 65536],
         }
-    }
-
-    fn set_key(&mut self, ino: u64) {
-        self.key.init(ino);
-    }
-
-    pub fn search_file<'fd>(&mut self, fd: BorrowedFd<'fd>, ino: u64) -> Sv2ItemIter<'_, 'fd> {
-        self.set_key(ino);
-        Sv2ItemIter::new(self, fd)
     }
 
     pub fn buf(&self) -> &[u8; 65536] {
