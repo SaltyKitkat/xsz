@@ -4,10 +4,16 @@ This is a rewrite of `compsize`, but faster, and use less memory.
 
 ## Introduction
 
-`xsz` is an open-source tool designed to measure the used compression types and effective compression ratios of files on a Btrfs filesystem,
-producing a comprehensive report. It is inspired by [compsize](https://github.com/kilobyte/compsize) and maintains compatibility with its command-line interface.
-However, `xsz` goes a step further by leveraging multi-threading to significantly enhance performance,
-especially on NVMe SSDs, while also providing notable speed improvements on other hardware.
+`xsz` is an open-source tool designed to measure the used compression types
+and effective compression ratios of files on a Btrfs filesystem,
+producing a comprehensive report. It is inspired by [compsize](https://github.com/kilobyte/compsize)
+and maintains compatibility with its command-line interface.
+However, xsz goes a step further by incorporating a variety of optimization techniques
+to significantly enhance performance,
+particularly on NVMe SSDs or with hot metadata cache, while also delivering substantial
+speed improvements across a wider range of hardware configurations.
+Under cache-hot conditions, it achieves over 50% higher performance even in single-threaded mode,
+and scales further to deliver markedly faster speeds when running with multiple threads.
 
 ## Usage
 
@@ -77,12 +83,12 @@ A: Yes, and no. The task is actually at somewhere between cpu bounded and io bou
 Q: So does `xsz` also run faster on HDD?
 
 A: Yes! I think it's because we do a lot less open and close syscalls.
-   So when running in `-j1`, `xsz` is a lot faster than `compsize`.
+   So even running in single thread, `xsz` is a lot faster than `compsize`.
    But multi-threading hardly improve the performance in this case.
 
 Q: Why `xsz` is faster?
 
-A: TL;DR: Because we use multi-threading, and do less syscall.
+A: TL;DR: Because we use multi-threading, and do less syscalls.
 
    Longer version:
    
