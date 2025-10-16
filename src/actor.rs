@@ -1,3 +1,4 @@
+#![allow(async_fn_in_trait)]
 use kanal::AsyncReceiver as Receiver;
 
 pub trait Actor {

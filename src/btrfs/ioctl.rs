@@ -1,4 +1,4 @@
-use rustix::ioctl::{opcode::read_write, Opcode};
+use rustix::ioctl::{Opcode, opcode::read_write};
 
 pub const BTRFS_IOCTL_MAGIC: u8 = 0x94;
 pub const BTRFS_IOCTL_SEARCH_V2: Opcode = read_write::<Sv2Args>(BTRFS_IOCTL_MAGIC, 17);
@@ -88,6 +88,6 @@ pub struct SearchHeader {
 }
 impl SearchHeader {
     pub unsafe fn from_raw(buf: &[u8]) -> Self {
-        buf.as_ptr().cast::<Self>().read()
+        unsafe { buf.as_ptr().cast::<Self>().read() }
     }
 }

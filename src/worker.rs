@@ -3,7 +3,9 @@ use kanal::AsyncSender as Sender;
 use crate::{
     actor::Actor,
     btrfs::{
-        ioctl::{IoctlSearchKey, Sv2Args}, tree, ExtentInfo, Sv2ItemIter
+        ExtentInfo, Sv2ItemIter,
+        ioctl::{IoctlSearchKey, Sv2Args},
+        tree,
     },
     collector::CollectorMsg,
     fs_util::File_,
@@ -12,14 +14,14 @@ use crate::{
     taskpak::TaskPak,
 };
 
-pub(crate) struct Worker {
+pub struct Worker {
     collector: TaskPak<ExtentInfo, CollectorMsg>,
     nfile: u64,
     sv2_args: Sv2Args,
 }
 
 impl Worker {
-    pub(crate) fn new(collector: Sender<CollectorMsg>) -> Self {
+    pub fn new(collector: Sender<CollectorMsg>) -> Self {
         Self {
             collector: TaskPak::new(collector),
             nfile: 0,

@@ -7,12 +7,12 @@ use crate::{
     scale::CompsizeStat,
 };
 
-pub(crate) struct Collector {
+pub struct Collector {
     pub(crate) stat: CompsizeStat,
 }
 
 impl Collector {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             stat: CompsizeStat::default(),
         }
@@ -43,7 +43,7 @@ impl Drop for Collector {
     }
 }
 
-pub(crate) enum CollectorMsg {
+pub enum CollectorMsg {
     Extent(Box<[ExtentInfo]>),
     NFile(u64),
 }

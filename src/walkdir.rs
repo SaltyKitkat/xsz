@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::{HashMap, VecDeque, hash_map::Entry},
     future::Future,
     io,
     marker::Send,
@@ -8,18 +8,18 @@ use std::{
     sync::Arc,
 };
 
-use kanal::{bounded_async as bounded, AsyncSender as Sender};
+use kanal::{AsyncSender as Sender, bounded_async as bounded};
 use nohash::BuildNoHashHasher;
 use rustix::{
-    fs::{open, Dir, Mode, OFlags},
+    fs::{Dir, Mode, OFlags, open},
     path::Arg,
 };
 
 use crate::{
     actor::{Actor, Runnable as _},
-    fs_util::{get_dev, DevId},
+    fs_util::{DevId, File_, get_dev},
     global::{config, get_err},
-    spawn, File_,
+    spawn,
 };
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();

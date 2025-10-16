@@ -1,12 +1,11 @@
 use std::{
-    fmt::Display, iter::FusedIterator, marker::PhantomData,
-    mem::transmute, os::fd::BorrowedFd,
+    fmt::Display, iter::FusedIterator, marker::PhantomData, mem::transmute, os::fd::BorrowedFd,
 };
 
-use ioctl::{SearchHeader, Sv2Args, BTRFS_IOCTL_SEARCH_V2};
+use ioctl::{BTRFS_IOCTL_SEARCH_V2, SearchHeader, Sv2Args};
 use rustix::{
     io::Errno,
-    ioctl::{ioctl, Updater},
+    ioctl::{Updater, ioctl},
 };
 
 use crate::btrfs::tree::Key;
@@ -198,9 +197,11 @@ impl ExtentInfo {
 
 impl<T: FromRaw> IoctlSearchItem<T> {
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let header = SearchHeader::from_raw(&buf[..size_of::<SearchHeader>()]);
-        let item = T::from_le_raw(&buf[size_of::<SearchHeader>()..]);
-        Self { header, item }
+        unsafe {
+            let header = SearchHeader::from_raw(&buf[..size_of::<SearchHeader>()]);
+            let item = T::from_le_raw(&buf[size_of::<SearchHeader>()..]);
+            Self { header, item }
+        }
     }
 }
 
