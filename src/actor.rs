@@ -7,7 +7,7 @@ pub trait Actor {
 }
 
 pub trait Runnable: Actor {
-    async fn run(mut self, receiver: Receiver<Self::Message>)
+    async fn run(mut self, receiver: Receiver<Self::Message>) -> Self
     where
         Self: Sized,
     {
@@ -17,6 +17,7 @@ pub trait Runnable: Actor {
                 break;
             }
         }
+        self
     }
 }
 

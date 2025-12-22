@@ -1,14 +1,12 @@
 use std::{
     process::exit,
     sync::{
-        atomic::{AtomicBool, Ordering},
         LazyLock,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use palc::Parser;
-
-use crate::scale::Scale;
 
 const HELP_MSG: &str = "xsz displays total space used by set of files, taking into account
 compression, reflinks, partially overwritten extents.";
@@ -29,13 +27,6 @@ pub struct Config {
     pub args: Vec<String>,
 }
 impl Config {
-    pub const fn scale(&self) -> Scale {
-        if self.bytes {
-            Scale::Bytes
-        } else {
-            Scale::Human
-        }
-    }
     fn from_args() -> Self {
         let opt = Config::parse();
         if opt.jobs == 0 {
@@ -68,11 +59,7 @@ const fn global_err() -> &'static AtomicBool {
 }
 
 const fn bool_to_result(is_err: bool) -> Result<(), ()> {
-    if is_err {
-        Err(())
-    } else {
-        Ok(())
-    }
+    if is_err { Err(()) } else { Ok(()) }
 }
 pub fn get_err() -> Result<(), ()> {
     bool_to_result(global_err().load(Ordering::Relaxed))

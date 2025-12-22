@@ -1,5 +1,3 @@
-use kanal::AsyncSender as Sender;
-
 use crate::{
     actor::Actor,
     btrfs::{
@@ -7,25 +5,24 @@ use crate::{
         ioctl::{IoctlSearchKey, Sv2Args},
         tree,
     },
-    collector::CollectorMsg,
     fs_util::File_,
     global::{get_err, set_err},
-    spawn,
-    taskpak::TaskPak,
 };
 
-pub struct Worker {
-    collector: TaskPak<ExtentInfo, CollectorMsg>,
-    nfile: u64,
-    sv2_args: Sv2Args,
+pub trait Sink {
+    fn consume(&mut self, f: ExtentInfo) -> impl Future + Send;
 }
 
-impl Worker {
-    pub fn new(collector: Sender<CollectorMsg>) -> Self {
+pub struct Worker<S> {
+    sink: S,
+    sv2_args: Box<Sv2Args>,
+}
+
+impl<S: Sink> Worker<S> {
+    pub fn new(sink: S) -> Self {
         Self {
-            collector: TaskPak::new(collector),
-            nfile: 0,
-            sv2_args: Sv2Args::from_sk(IoctlSearchKey::new(
+            sink,
+            sv2_args: Box::new(Sv2Args::from_sk(IoctlSearchKey::new(
                 0,
                 0,
                 0,
@@ -35,12 +32,11 @@ impl Worker {
                 u64::MAX,
                 tree::r#type::EXTENT_DATA,
                 tree::r#type::EXTENT_DATA,
-            )),
+            ))),
         }
     }
 
     pub(crate) async fn handle_file(&mut self, f: File_) -> Result<(), ()> {
-        self.nfile += 1;
         self.sv2_args.key.min_objectid = f.ino();
         self.sv2_args.key.max_objectid = f.ino();
         let iter = Sv2ItemIter::new(&mut self.sv2_args, f.borrow_fd());
@@ -62,7 +58,7 @@ impl Worker {
             };
             match extent.parse() {
                 Ok(Some(extent)) => {
-                    self.collector.push(extent).await;
+                    self.sink.consume(extent).await;
                 }
                 Err(e) => {
                     set_err()?;
@@ -76,7 +72,7 @@ impl Worker {
     }
 }
 
-impl Actor for Worker {
+impl<S: Sink> Actor for Worker<S> {
     type Message = Box<[File_]>;
     async fn handle(&mut self, files: Self::Message) -> Result<(), ()> {
         for f in files {
@@ -84,15 +80,5 @@ impl Actor for Worker {
             self.handle_file(f).await?;
         }
         Ok(())
-    }
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        let sender = self.collector.sender().clone();
-        let nfile = self.nfile;
-        spawn(async move {
-            sender.send(nfile.into()).await.ok();
-        });
     }
 }

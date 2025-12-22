@@ -6,7 +6,7 @@ use std::{
 };
 
 use rustix::{
-    fs::{fstat, open, stat, Mode, OFlags},
+    fs::{Mode, OFlags, fstat, open, stat},
     io::Result,
 };
 
@@ -20,11 +20,12 @@ pub struct File_ {
     fd: Arc<OwnedFd>,
     path: Box<Path>,
     ino: u64,
+    dev: u64,
 }
 
 impl File_ {
-    pub fn new(fd: Arc<OwnedFd>, path: Box<Path>, ino: u64) -> Self {
-        Self { fd, path, ino }
+    pub fn new(fd: Arc<OwnedFd>, path: Box<Path>, dev: u64, ino: u64) -> Self {
+        Self { fd, path, dev, ino }
     }
     pub fn borrow_fd(&self) -> BorrowedFd<'_> {
         self.fd.as_fd()
@@ -35,9 +36,14 @@ impl File_ {
     pub fn path(&self) -> &Path {
         &self.path
     }
+    pub fn dev(&self) -> u64 {
+        self.dev
+    }
     pub fn from_path(p: Box<Path>) -> Result<Self> {
         let fd = Arc::new(open(p.as_ref(), OFlags::NOFOLLOW, Mode::RUSR)?);
-        let ino = fstat(fd.as_fd())?.st_ino;
-        Ok(Self::new(fd, p, ino))
+        let stat = fstat(fd.as_fd())?;
+        let dev = stat.st_dev;
+        let ino = stat.st_ino;
+        Ok(Self::new(fd, p, dev, ino))
     }
 }

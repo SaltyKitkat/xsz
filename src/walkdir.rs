@@ -24,8 +24,8 @@ use crate::{
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
-pub trait FileConsumer {
-    fn consume(&mut self, f: File_) -> impl Future<Output = ()> + Send;
+pub trait Sink {
+    fn consume(&mut self, f: File_) -> impl Future + Send;
 }
 
 pub struct JobChunk {
@@ -108,7 +108,7 @@ impl WalkDir {
         nwalker: u8,
     ) where
         F: FnMut() -> FC + Send + 'static,
-        FC: FileConsumer + Send + 'static,
+        FC: Sink + Send + 'static,
     {
         assert_ne!(nwalker, 0);
         let mut files = vec![];
@@ -234,7 +234,7 @@ pub struct WalkerMsg {
 
 impl<F> Actor for Walker<F>
 where
-    F: FileConsumer + Send,
+    F: Sink + Send,
 {
     type Message = WalkerMsg;
 
@@ -299,7 +299,7 @@ where
                     }
                 } else if file_type.is_file() {
                     self.file_handler
-                        .consume(File_::new(fd.clone(), path, entry.ino()))
+                        .consume(File_::new(fd.clone(), path, dev.into(), entry.ino()))
                         .await;
                 }
             }

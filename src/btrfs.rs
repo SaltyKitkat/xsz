@@ -19,7 +19,7 @@ pub trait FromRaw {
 }
 
 // le on disk and eb
-pub struct FileExtent {
+pub struct ExtentItem {
     pub generation: u64,
     pub ram_bytes: u64,
     pub compression: u8,
@@ -33,7 +33,7 @@ pub struct FileExtent {
     pub num_bytes: u64,
 }
 
-impl FileExtent {
+impl ExtentItem {
     const fn inline_header_size() -> usize {
         8 + 8 + 1 + 1 + 2 + 1
     }
@@ -42,7 +42,7 @@ impl FileExtent {
     }
 }
 
-impl FromRaw for FileExtent {
+impl FromRaw for ExtentItem {
     fn raw_size(&self) -> u32 {
         8 + 8 + 1 + 1 + 2 + 1 + 8 * 4
     }
@@ -86,6 +86,7 @@ impl FromRaw for FileExtent {
     }
 }
 
+#[allow(unused)]
 pub struct DirItem {
     key: Key,
     transid: u64,
@@ -178,7 +179,15 @@ pub struct ExtentInfo {
 }
 
 impl ExtentInfo {
-    pub fn key(&self) -> u64 {
+    pub fn objectid(&self) -> u64 {
+        self.objectid
+    }
+
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn disk_bytenr(&self) -> u64 {
         self.disk_bytenr
     }
 
@@ -205,7 +214,7 @@ impl<T: FromRaw> IoctlSearchItem<T> {
     }
 }
 
-impl IoctlSearchItem<FileExtent> {
+impl IoctlSearchItem<ExtentItem> {
     pub fn parse(&self) -> Result<Option<ExtentInfo>, String> {
         let hlen = self.header.len;
         let ram_bytes = self.item.ram_bytes;
@@ -214,7 +223,7 @@ impl IoctlSearchItem<FileExtent> {
         let objectid = self.header.objectid;
         let offset = self.header.offset;
         if self.item.is_inline() {
-            let disk_num_bytes = hlen as u64 - FileExtent::inline_header_size() as u64;
+            let disk_num_bytes = hlen as u64 - ExtentItem::inline_header_size() as u64;
             return Ok(Some(ExtentInfo {
                 objectid,
                 offset,

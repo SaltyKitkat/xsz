@@ -18,7 +18,7 @@ where
     M: Send + 'static,
     Box<[T]>: Into<M>,
 {
-    const SIZE: usize = 1024 * 4 / size_of::<T>();
+    const SIZE: usize = 1024 * 16 / size_of::<T>();
     pub fn new(sender: Sender<M>) -> Self {
         Self {
             inner: Vec::with_capacity(Self::SIZE),
@@ -28,14 +28,9 @@ where
     pub async fn push(&mut self, item: T) {
         self.inner.push(item);
         if self.is_full() {
-            self.sender
-                .send(
-                    replace(&mut self.inner, Vec::with_capacity(Self::SIZE))
-                        .into_boxed_slice()
-                        .into(),
-                )
-                .await
-                .ok();
+            let mut tmp = Vec::with_capacity(Self::SIZE);
+            tmp.extend(self.inner.drain(..));
+            self.sender.send(tmp.into_boxed_slice().into()).await.ok();
         }
     }
 

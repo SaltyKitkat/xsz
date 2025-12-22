@@ -3,12 +3,12 @@ use std::{
     pin::pin,
     sync::{Arc, LazyLock},
     task::{Context, Poll, Wake, Waker},
-    thread::{current, park, Builder, Thread},
+    thread::{Builder, Thread, current, park},
 };
 
 use async_task::{Runnable, Task};
 use futures_lite::FutureExt;
-use kanal::{unbounded, Receiver, Sender};
+use kanal::{Receiver, Sender, unbounded};
 
 use crate::global::config;
 
@@ -62,10 +62,10 @@ pub fn block_on<F>(fut: F) -> F::Output
 where
     F: Future,
 {
-    let recv = global().receiver.clone();
+    let recv = global().receiver.clone().to_async();
     let f = fut.or(async move {
         loop {
-            match recv.as_async().recv().await {
+            match recv.recv().await {
                 Ok(r) => {
                     r.run();
                 }
@@ -87,7 +87,7 @@ where
         }
     }
     let inner = Arc::new(ThreadWaker { thread });
-    let waker = Waker::from(inner.clone());
+    let waker = Waker::from(inner);
     let mut cx = Context::from_waker(&waker);
     loop {
         match f.as_mut().poll(&mut cx) {
