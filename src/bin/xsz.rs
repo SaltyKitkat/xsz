@@ -10,7 +10,7 @@ use std::{
 use kanal::bounded_async as bounded;
 use mimalloc::MiMalloc;
 use xsz::{
-    actor::{Actor, Runnable},
+    actor::Runnable,
     btrfs::ExtentInfo,
     executor::block_on,
     fs_util::File_,
@@ -21,13 +21,11 @@ use xsz::{
     worker::{self, Worker},
 };
 
-use crate::collector::Collector;
-
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
 struct F {
-    taskpak: TaskPak<File_, <Worker<S> as Actor>::Message>,
+    taskpak: TaskPak<File_>,
     global_nfile: Arc<AtomicU64>,
     local_nfile: u16,
 }
@@ -49,7 +47,7 @@ impl Drop for F {
     }
 }
 
-struct S(TaskPak<ExtentInfo, <Collector as Actor>::Message>);
+struct S(TaskPak<ExtentInfo>);
 impl worker::Sink for S {
     fn consume(&mut self, f: ExtentInfo) -> impl Future + Send {
         self.0.push(f)

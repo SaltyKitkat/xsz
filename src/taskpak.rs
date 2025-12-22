@@ -1,25 +1,17 @@
-use std::mem::{replace, take};
+use std::mem::take;
 
 use kanal::AsyncSender as Sender;
 
 use crate::spawn;
 
-pub struct TaskPak<T, M>
-where
-    M: Send + 'static,
-    Box<[T]>: Into<M>,
-{
+pub struct TaskPak<T: Send + 'static> {
     pub(crate) inner: Vec<T>,
-    pub(crate) sender: Sender<M>,
+    pub(crate) sender: Sender<Box<[T]>>,
 }
 
-impl<T, M> TaskPak<T, M>
-where
-    M: Send + 'static,
-    Box<[T]>: Into<M>,
-{
+impl<T: Send + 'static> TaskPak<T> {
     const SIZE: usize = 1024 * 16 / size_of::<T>();
-    pub fn new(sender: Sender<M>) -> Self {
+    pub fn new(sender: Sender<Box<[T]>>) -> Self {
         Self {
             inner: Vec::with_capacity(Self::SIZE),
             sender,
@@ -34,7 +26,7 @@ where
         }
     }
 
-    pub fn sender(&self) -> &Sender<M> {
+    pub fn sender(&self) -> &Sender<Box<[T]>> {
         &self.sender
     }
 
@@ -46,11 +38,7 @@ where
     }
 }
 
-impl<T, M> Drop for TaskPak<T, M>
-where
-    M: Send + 'static,
-    Box<[T]>: Into<M>,
-{
+impl<T: Send + 'static> Drop for TaskPak<T> {
     fn drop(&mut self) {
         if !self.is_empty() {
             let handler = self.sender.clone();
