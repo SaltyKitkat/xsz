@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, VecDeque, hash_map::Entry},
-    future::Future,
     io,
     marker::Send,
     os::fd::OwnedFd,
@@ -16,17 +15,13 @@ use rustix::{
 };
 
 use crate::{
-    actor::{Actor, Runnable as _},
+    actor::{Actor, Runnable as _, Sink},
     fs_util::{DevId, File_, get_dev},
     global::{config, get_err},
     spawn,
 };
 
 const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
-
-pub trait Sink {
-    fn consume(&mut self, f: File_) -> impl Future + Send;
-}
 
 pub struct JobChunk {
     dev: DevId,
@@ -108,7 +103,7 @@ impl WalkDir {
         nwalker: u8,
     ) where
         F: FnMut() -> FC + Send + 'static,
-        FC: Sink + Send + 'static,
+        FC: Sink<Item = File_> + Send + 'static,
     {
         assert_ne!(nwalker, 0);
         let mut files = vec![];
@@ -234,7 +229,7 @@ pub struct WalkerMsg {
 
 impl<F> Actor for Walker<F>
 where
-    F: Sink + Send,
+    F: Sink<Item = File_> + Send,
 {
     type Message = WalkerMsg;
 
@@ -299,7 +294,7 @@ where
                     }
                 } else if file_type.is_file() {
                     self.file_handler
-                        .consume(File_::new(fd.clone(), path, dev.into(), entry.ino()))
+                        .consume(File_::new(fd.clone(), path, entry.ino()))
                         .await;
                 }
             }

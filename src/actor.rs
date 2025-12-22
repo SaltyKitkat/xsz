@@ -22,3 +22,8 @@ pub trait Runnable: Actor {
 }
 
 impl<T: Actor> Runnable for T {}
+
+pub trait Sink {
+    type Item;
+    fn consume(&mut self, f: Self::Item) -> impl Future + Send;
+}

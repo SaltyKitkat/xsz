@@ -10,15 +10,15 @@ use std::{
 use kanal::bounded_async as bounded;
 use mimalloc::MiMalloc;
 use xsz::{
-    actor::Runnable,
+    actor::{Runnable, Sink},
     btrfs::ExtentInfo,
     executor::block_on,
     fs_util::File_,
     global::{config, get_err},
     spawn,
     taskpak::TaskPak,
-    walkdir::{self, WalkDir},
-    worker::{self, Worker},
+    walkdir::WalkDir,
+    worker::Worker,
 };
 
 #[global_allocator]
@@ -29,7 +29,8 @@ struct F {
     global_nfile: Arc<AtomicU64>,
     local_nfile: u16,
 }
-impl walkdir::Sink for F {
+impl Sink for F {
+    type Item = File_;
     fn consume(&mut self, f: File_) -> impl Future + Send {
         self.local_nfile += 1;
         if self.local_nfile > 16 * 1024 {
@@ -48,7 +49,8 @@ impl Drop for F {
 }
 
 struct S(TaskPak<ExtentInfo>);
-impl worker::Sink for S {
+impl Sink for S {
+    type Item = ExtentInfo;
     fn consume(&mut self, f: ExtentInfo) -> impl Future + Send {
         self.0.push(f)
     }

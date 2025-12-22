@@ -1,5 +1,5 @@
 use crate::{
-    actor::Actor,
+    actor::{Actor, Sink},
     btrfs::{
         ExtentInfo, Sv2ItemIter,
         ioctl::{IoctlSearchKey, Sv2Args},
@@ -9,16 +9,12 @@ use crate::{
     global::{get_err, set_err},
 };
 
-pub trait Sink {
-    fn consume(&mut self, f: ExtentInfo) -> impl Future + Send;
-}
-
 pub struct Worker<S> {
     sink: S,
     sv2_args: Box<Sv2Args>,
 }
 
-impl<S: Sink> Worker<S> {
+impl<S: Sink<Item = ExtentInfo>> Worker<S> {
     pub fn new(sink: S) -> Self {
         Self {
             sink,
@@ -72,7 +68,7 @@ impl<S: Sink> Worker<S> {
     }
 }
 
-impl<S: Sink> Actor for Worker<S> {
+impl<S: Sink<Item = ExtentInfo>> Actor for Worker<S> {
     type Message = Box<[File_]>;
     async fn handle(&mut self, files: Self::Message) -> Result<(), ()> {
         for f in files {
