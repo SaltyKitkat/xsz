@@ -1,3 +1,5 @@
+use std::{fmt::Display, mem::transmute};
+
 #[repr(packed)]
 pub struct Key {
     pub objectid: u64,
@@ -146,4 +148,141 @@ pub mod r#type {
             _ => return None,
         })
     }
+}
+
+pub trait TreeItem {
+    const TYPE: u8;
+    fn raw_size(&self) -> u32;
+    unsafe fn from_le_raw(buf: &[u8]) -> Self;
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(unused)]
+pub enum Compression {
+    None = 0,
+    Zlib,
+    Lzo,
+    Zstd,
+}
+impl Compression {
+    pub fn as_usize(self) -> usize {
+        self as usize
+    }
+    pub fn from_u8(n: u8) -> Self {
+        assert!(n <= 3);
+        // safety: the assertion checks that `n`` is in valid `Compression` range.
+        unsafe { transmute(n) }
+    }
+    pub fn name(&self) -> &'static str {
+        match self {
+            Compression::None => "none",
+            Compression::Zlib => "zlib",
+            Compression::Lzo => "lzo",
+            Compression::Zstd => "zstd",
+        }
+    }
+}
+impl Display for Compression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[allow(unused)]
+pub enum ExtentType {
+    Inline = 0,
+    Regular,
+    Prealloc,
+}
+
+impl ExtentType {
+    pub fn from_u8(n: u8) -> Self {
+        if n > 2 {
+            panic!("Invalid extent type: {}", n);
+        }
+        // Safety: the assertion checks that `n` is in valid `ExtentType` range.
+        unsafe { transmute(n) }
+    }
+}
+
+// le on disk and eb
+pub struct ExtentData {
+    pub generation: u64,
+    pub ram_bytes: u64,
+    pub compression: u8,
+    pub encryption: u8,
+    pub other_encoding: u16,
+    pub r#type: u8,
+    // inline data start here
+    pub disk_bytenr: u64,
+    pub disk_num_bytes: u64,
+    pub offset: u64,
+    pub num_bytes: u64,
+}
+
+impl ExtentData {
+    pub const fn inline_header_size() -> usize {
+        8 + 8 + 1 + 1 + 2 + 1
+    }
+    pub fn is_inline(&self) -> bool {
+        ExtentType::Inline == ExtentType::from_u8(self.r#type)
+    }
+}
+
+impl TreeItem for ExtentData {
+    const TYPE: u8 = r#type::EXTENT_DATA;
+    fn raw_size(&self) -> u32 {
+        8 + 8 + 1 + 1 + 2 + 1 + 8 * 4
+    }
+    unsafe fn from_le_raw(buf: &[u8]) -> Self {
+        let mut ptr = buf.as_ptr() as *const u8;
+        unsafe {
+            let generation = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let ram_bytes = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let compression = ptr.cast::<u8>().read_unaligned().to_le();
+            ptr = ptr.add(1);
+            let encryption = ptr.cast::<u8>().read_unaligned().to_le();
+            ptr = ptr.add(1);
+            let other_encoding = ptr.cast::<u16>().read_unaligned().to_le();
+            ptr = ptr.add(2);
+            let r#type = ptr.cast::<u8>().read_unaligned().to_le();
+            ptr = ptr.add(1);
+            let disk_bytenr = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let disk_num_bytes = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let offset = ptr.cast::<u64>().read_unaligned().to_le();
+            ptr = ptr.add(8);
+            let num_bytes = ptr.cast::<u64>().read_unaligned().to_le();
+            let ret = Self {
+                generation,
+                ram_bytes,
+                compression,
+                encryption,
+                other_encoding,
+                r#type,
+                disk_bytenr,
+                disk_num_bytes,
+                offset,
+                num_bytes,
+            };
+            assert!(buf.len() >= ret.raw_size() as usize);
+            ret
+        }
+    }
+}
+
+#[allow(unused)]
+pub struct DirItem {
+    key: Key,
+    transid: u64,
+    data_len: u16,
+    // name_len: u16,
+    r#type: u8,
+    name: String,
 }

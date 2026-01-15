@@ -33,9 +33,7 @@ impl<S: Sink<Item = ExtentInfo>> Worker<S> {
     }
 
     pub(crate) async fn handle_file(&mut self, f: File_) -> Result<(), ()> {
-        self.sv2_args.key.min_objectid = f.ino();
-        self.sv2_args.key.max_objectid = f.ino();
-        let iter = Sv2ItemIter::new(&mut self.sv2_args, f.borrow_fd());
+        let iter = Sv2ItemIter::new(&mut self.sv2_args, f.borrow_fd(), f.ino());
         for extent in iter {
             let extent = match extent {
                 Ok(extent) => extent,

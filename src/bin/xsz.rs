@@ -13,7 +13,10 @@ use mimalloc::MiMalloc;
 use nohash::IntSet;
 use xsz::{
     actor::{Actor, Runnable, Sink},
-    btrfs::{Compression, ExtentInfo, ExtentType, Stat},
+    btrfs::{
+        ExtentInfo, Stat,
+        tree::{Compression, ExtentType},
+    },
     executor::block_on,
     fs_util::File_,
     global::{config, get_err},
