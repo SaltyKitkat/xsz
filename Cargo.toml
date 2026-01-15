@@ -1,6 +1,6 @@
 [package]
 name = "xsz"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 
 [dependencies]
@@ -14,6 +14,8 @@ rustix = { version = "1.0.3", features = [ "fs" ] }
 
 [[bin]]
 name = "xsz"
+[[bin]]
+name = "xfrag"
 
 [profile]
 [profile.dev.package."*"]
@@ -23,6 +25,6 @@ debug = 0
 opt-level = "s"
 codegen-units = 1
 debug = 0
-lto = true
+lto = "fat"
 strip = "symbols"
 panic = "abort"
