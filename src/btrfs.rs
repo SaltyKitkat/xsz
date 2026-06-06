@@ -17,12 +17,12 @@ pub struct IoctlSearchItem<T> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct Stat {
+pub struct SizeStat {
     pub disk: u64,
     pub uncomp: u64,
     pub refd: u64,
 }
-impl Stat {
+impl SizeStat {
     pub fn is_empty(&self) -> bool {
         self.uncomp == 0
     }
@@ -38,7 +38,7 @@ pub struct ExtentInfo {
     disk_bytenr: u64,
     r#type: ExtentType,
     compression: Compression,
-    stat: Stat,
+    stat: SizeStat,
 }
 
 impl ExtentInfo {
@@ -62,7 +62,7 @@ impl ExtentInfo {
         self.compression
     }
 
-    pub fn stat(&self) -> Stat {
+    pub fn stat(&self) -> SizeStat {
         self.stat
     }
 }
@@ -93,7 +93,7 @@ impl IoctlSearchItem<ExtentData> {
                 disk_bytenr: 0,
                 r#type,
                 compression,
-                stat: Stat {
+                stat: SizeStat {
                     disk: disk_num_bytes,
                     uncomp: ram_bytes,
                     refd: ram_bytes,
@@ -124,7 +124,7 @@ impl IoctlSearchItem<ExtentData> {
             disk_bytenr,
             r#type,
             compression,
-            stat: Stat {
+            stat: SizeStat {
                 disk: disk_bytes,
                 uncomp: ram_bytes,
                 refd: refd_bytes,

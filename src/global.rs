@@ -23,6 +23,9 @@ pub struct Config {
     /// allow N jobs at once
     #[arg(short, long, default_value_t = 1)]
     pub jobs: u8,
+    /// print fragment length distribution summary
+    #[arg(short = 'F', long)]
+    pub frag: bool,
     #[arg(required = true, value_name = "file-or-dir")]
     pub args: Vec<String>,
 }
