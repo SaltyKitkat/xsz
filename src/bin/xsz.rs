@@ -125,14 +125,14 @@ impl FragStat {
             if idx == 0 {
                 BinLabel {
                     lo: 0,
-                    hi: Some(unsafe { NonZeroU64::new_unchecked(4096) }),
+                    hi: NonZeroU64::new(4096),
                 }
             } else {
                 let lo = 1u64 << (idx + 12);
                 if idx < Self::FRAG_BINS - 1 {
                     BinLabel {
                         lo,
-                        hi: Some(unsafe { NonZeroU64::new_unchecked(lo << 1) }),
+                        hi: NonZeroU64::new(lo << 1),
                     }
                 } else {
                     BinLabel { lo, hi: None }
