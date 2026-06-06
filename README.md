@@ -105,7 +105,8 @@ Q: Oh, yes, `xsz` seems good. Can I use it as a dropin replacement for `compsize
 A: Yes, and no. We try to have the same cli-arguments with `compsize`, but we added a `-j`
    so you can set the number of worker threads. And, `xsz` is not widely used and tested like
    `compsize`. So welcome to have a try. And if you find the result is different from `compsize`,
-   please report it as a BUG.
+   it's expected because we do real rounding instead of just drop the tail like `compsize`
+   since v0.4.1 release(commit 9549fa5).
 
 Q: How many worker threads should I set on my machine?
 
