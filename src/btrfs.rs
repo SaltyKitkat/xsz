@@ -146,11 +146,12 @@ impl<T: TreeItem> Iterator for Sv2ItemIter<'_, '_, T> {
     type Item = Result<IoctlSearchItem<T>, Errno>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.need_ioctl() {
-            if let Err(e) = self.call_ioctl() {
-                return Some(Err(e));
-            }
+        if self.need_ioctl()
+            && let Err(e) = self.call_ioctl()
+        {
+            return Some(Err(e));
         }
+
         if self.finish() {
             return None;
         }
@@ -179,7 +180,7 @@ impl<'arg, 'fd, T: TreeItem> Sv2ItemIter<'arg, 'fd, T> {
     fn call_ioctl(&mut self) -> Result<(), Errno> {
         unsafe {
             let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(self.sv2_arg);
-            ioctl(&self.fd, ctl)?;
+            ioctl(self.fd, ctl)?;
         }
         self.nrest_item = self.sv2_arg.key.nr_items;
         self.last = self.nrest_item <= 512;

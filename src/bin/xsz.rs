@@ -7,7 +7,6 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    u64,
 };
 
 use kanal::bounded_async as bounded;
@@ -38,7 +37,7 @@ impl Scale {
         const UNITS: &[u8; 7] = b"BKMGTPE";
 
         match self {
-            Scale::Bytes => return format!("{}", num),
+            Scale::Bytes => format!("{}", num),
             Scale::Human => {
                 let base = 1024;
                 let mut cnt = 0;
@@ -51,11 +50,11 @@ impl Scale {
                 if tail == 0 {
                     return format!("{}{}", integer, UNITS[cnt] as char);
                 }
-                return format!(
+                format!(
                     "  {:.1}{}",
                     (num as f64) / (1 << bits) as f64,
                     UNITS[cnt] as char
-                );
+                )
             }
         }
     }
@@ -265,11 +264,11 @@ impl ExtentInfoSink for CompsizeStat {
             if !s.is_empty() {
                 write_table(
                     f,
-                    &name,
-                    &format!("{:>3}%", s.get_percent()),
-                    &scale.scale(s.disk),
-                    &scale.scale(s.uncomp),
-                    &scale.scale(s.refd),
+                    name,
+                    format!("{:>3}%", s.get_percent()),
+                    scale.scale(s.disk),
+                    scale.scale(s.uncomp),
+                    scale.scale(s.refd),
                 )?;
             }
             Ok::<_, std::io::Error>(())
@@ -290,20 +289,20 @@ impl CompsizeStat {
         let total_refd = self.prealloc.refd + self.stat.iter().map(|s| s.refd).sum::<u64>();
         write_table(
             f,
-            &"Type",
-            &"Perc",
-            &"Disk Usage",
-            &"Uncompressed",
-            &"Referenced",
+            "Type",
+            "Perc",
+            "Disk Usage",
+            "Uncompressed",
+            "Referenced",
         )?;
         let total_percentage = total_disk * 100 / total_uncomp;
         write_table(
             f,
-            &"TOTAL",
-            &format!("{:>3}%", total_percentage),
-            &scale.scale(total_disk),
-            &scale.scale(total_uncomp),
-            &scale.scale(total_refd),
+            "TOTAL",
+            format!("{:>3}%", total_percentage),
+            scale.scale(total_disk),
+            scale.scale(total_uncomp),
+            scale.scale(total_refd),
         )?;
         Ok(())
     }

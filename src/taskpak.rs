@@ -21,8 +21,8 @@ impl<T: Send + 'static> TaskPak<T> {
         self.inner.push(item);
         if self.is_full() {
             let mut tmp = Vec::with_capacity(Self::SIZE);
-            tmp.extend(self.inner.drain(..));
-            self.sender.send(tmp.into_boxed_slice().into()).await.ok();
+            tmp.append(&mut self.inner);
+            self.sender.send(tmp.into_boxed_slice()).await.ok();
         }
     }
 
@@ -42,7 +42,7 @@ impl<T: Send + 'static> Drop for TaskPak<T> {
     fn drop(&mut self) {
         if !self.is_empty() {
             let handler = self.sender.clone();
-            let item = take(&mut self.inner).into_boxed_slice().into();
+            let item = take(&mut self.inner).into_boxed_slice();
             spawn(async move {
                 handler.send(item).await.ok();
             });

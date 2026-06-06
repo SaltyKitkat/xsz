@@ -1,6 +1,6 @@
 use std::{fmt::Display, mem::transmute};
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Key {
     pub objectid: u64,
     pub r#type: u8,
@@ -238,7 +238,7 @@ impl TreeItem for ExtentData {
         8 + 8 + 1 + 1 + 2 + 1 + 8 * 4
     }
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        let mut ptr = buf.as_ptr() as *const u8;
+        let mut ptr = buf.as_ptr();
         unsafe {
             let generation = ptr.cast::<u64>().read_unaligned().to_le();
             ptr = ptr.add(8);

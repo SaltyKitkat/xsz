@@ -25,8 +25,7 @@ const MAX_LOCAL_LEN: usize = 4096 / size_of::<Box<Path>>();
 
 pub struct JobChunk {
     dev: DevId,
-    fd: Arc<OwnedFd>,
-    dirs: Vec<Box<Path>>,
+    wq: SubvolWQ,
 }
 
 impl JobChunk {
@@ -40,15 +39,29 @@ impl JobChunk {
         )?;
         Ok(Self {
             dev,
-            fd: Arc::new(fd),
-            dirs: vec![path.into()],
+            wq: SubvolWQ {
+                fd: Arc::new(fd),
+                paths: vec![path],
+            },
         })
     }
 }
 
-struct JobMgr {
-    jobs: HashMap<DevId, (Vec<Box<Path>>, Arc<OwnedFd>), BuildNoHashHasher<u64>>,
+struct SubvolWQ {
+    paths: Vec<Box<Path>>,
+    fd: Arc<OwnedFd>,
 }
+impl SubvolWQ {
+    fn split(&mut self, n: usize) -> Self {
+        let paths = self.paths.drain(0..n).collect();
+        let fd = self.fd.clone();
+        Self { paths, fd }
+    }
+}
+struct JobMgr {
+    jobs: HashMap<DevId, SubvolWQ, BuildNoHashHasher<u64>>,
+}
+
 impl JobMgr {
     fn new() -> Self {
         Self {
@@ -57,9 +70,9 @@ impl JobMgr {
     }
     fn push(&mut self, mut job_chunk: JobChunk) {
         match self.jobs.entry(job_chunk.dev) {
-            Entry::Occupied(mut o) => o.get_mut().0.append(&mut job_chunk.dirs),
+            Entry::Occupied(mut o) => o.get_mut().paths.append(&mut job_chunk.wq.paths),
             Entry::Vacant(v) => {
-                v.insert((job_chunk.dirs, job_chunk.fd));
+                v.insert(job_chunk.wq);
             }
         }
     }
@@ -69,15 +82,12 @@ impl JobMgr {
         let Entry::Occupied(mut entry) = self.jobs.entry(dev) else {
             unreachable!("key is from keys() which is non-empty")
         };
-        let (dirs, fd) = if entry.get().0.len() <= n {
+        let wq = if entry.get().paths.len() <= n {
             entry.remove()
         } else {
-            (
-                entry.get_mut().0.drain(0..n).collect(),
-                entry.get().1.clone(),
-            )
+            entry.get_mut().split(n)
         };
-        Some(JobChunk { dev, fd, dirs })
+        Some(JobChunk { dev, wq })
     }
 
     fn is_empty(&self) -> bool {
@@ -91,7 +101,7 @@ impl JobMgr {
 
 type WalkerId = u8;
 pub struct WalkDir {
-    walkers: Box<[Sender<WalkerMsg>]>,
+    walkers: Box<[Sender<JobChunk>]>,
     pending_walkers: Vec<WalkerId>,
     global_joblist: JobMgr,
 }
@@ -177,7 +187,7 @@ impl WalkDir {
             let chunk = self.global_joblist.get_n_jobs(MAX_LOCAL_LEN / 2).unwrap();
             let id = self.pending_walkers.pop().unwrap();
             let walker = &self.walkers[id as usize];
-            walker.send(WalkerMsg { chunk }).await.ok();
+            walker.send(chunk).await.ok();
         }
     }
 }
@@ -223,21 +233,18 @@ impl<F> Walker<F> {
     }
 }
 
-pub struct WalkerMsg {
-    chunk: JobChunk,
-}
-
 impl<F> Actor for Walker<F>
 where
     F: Sink<Item = File_> + Send,
 {
-    type Message = WalkerMsg;
+    type Message = JobChunk;
 
     async fn handle(&mut self, msg: Self::Message) -> Result<(), ()> {
-        let WalkerMsg {
-            chunk: JobChunk { dev, dirs, fd },
+        let JobChunk {
+            dev,
+            wq: SubvolWQ { paths, fd },
         } = msg;
-        let mut dirs = VecDeque::from(dirs);
+        let mut dirs = VecDeque::from(paths);
         let mut newfs_dirs = Vec::new();
         while let Some(dir_path) = dirs.pop_back() {
             if get_err().is_err() {
@@ -288,8 +295,10 @@ where
                         };
                         newfs_dirs.push(JobChunk {
                             dev: dir_dev,
-                            fd: Arc::new(fd),
-                            dirs: vec![path],
+                            wq: SubvolWQ {
+                                fd: Arc::new(fd),
+                                paths: vec![path],
+                            },
                         });
                     }
                 } else if file_type.is_file() {
@@ -310,8 +319,10 @@ where
                 self.master
                     .send(WalkDirMsg::PushJobs(JobChunk {
                         dev,
-                        fd: fd.clone(),
-                        dirs: v,
+                        wq: SubvolWQ {
+                            fd: fd.clone(),
+                            paths: v,
+                        },
                     }))
                     .await
                     .map_err(|_| ())?;

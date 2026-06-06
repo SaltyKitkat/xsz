@@ -47,7 +47,7 @@ struct Global {
 impl Global {
     const fn new() -> Self {
         let err = AtomicBool::new(false);
-        let config: LazyLock<Config> = LazyLock::new(|| Config::from_args());
+        let config: LazyLock<Config> = LazyLock::new(Config::from_args);
         Self { err, config }
     }
 }
