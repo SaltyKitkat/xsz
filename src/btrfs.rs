@@ -1,4 +1,4 @@
-use std::{iter::FusedIterator, marker::PhantomData, os::fd::BorrowedFd};
+use std::{hint::cold_path, iter::FusedIterator, marker::PhantomData, os::fd::BorrowedFd};
 
 use ioctl::{BTRFS_IOCTL_SEARCH_V2, SearchHeader, Sv2Args};
 use rustix::{
@@ -23,9 +23,11 @@ pub struct SizeStat {
     pub refd: u64,
 }
 impl SizeStat {
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.uncomp == 0
     }
+    #[inline]
     pub fn get_percent(&self) -> u64 {
         self.disk * 100 / self.uncomp
     }
@@ -101,6 +103,7 @@ impl IoctlSearchItem<ExtentData> {
             }));
         }
         if hlen != self.item.raw_size() {
+            cold_path();
             let errmsg = format!("Regular extent's header not 53 bytes ({}) long?!?", hlen);
             return Err(errmsg);
         }
@@ -111,6 +114,7 @@ impl IoctlSearchItem<ExtentData> {
         }
         // check 4k alignment
         if disk_bytenr & 0xfff != 0 {
+            cold_path();
             let errmsg = format!("Extent not 4k aligned at ({:#x})", disk_bytenr);
             return Err(errmsg);
         }
@@ -187,9 +191,11 @@ impl<'arg, 'fd, T: TreeItem> Sv2ItemIter<'arg, 'fd, T> {
         self.pos = 0;
         Ok(())
     }
+    #[inline]
     fn need_ioctl(&self) -> bool {
         self.nrest_item == 0 && !self.last
     }
+    #[inline]
     fn finish(&self) -> bool {
         self.nrest_item == 0 && self.last
     }

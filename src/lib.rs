@@ -7,6 +7,7 @@ pub mod taskpak;
 pub mod walkdir;
 pub mod worker;
 
+#[inline]
 pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) {
     executor::spawn(future).detach();
 }

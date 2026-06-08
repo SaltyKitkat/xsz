@@ -166,9 +166,11 @@ pub enum Compression {
     Zstd,
 }
 impl Compression {
+    #[inline]
     pub fn as_usize(self) -> usize {
         self as usize
     }
+    #[inline]
     pub fn from_u8(n: u8) -> Self {
         assert!(n <= 3);
         // safety: the assertion checks that `n`` is in valid `Compression` range.
@@ -199,6 +201,7 @@ pub enum ExtentType {
 }
 
 impl ExtentType {
+    #[inline]
     pub fn from_u8(n: u8) -> Self {
         if n > 2 {
             panic!("Invalid extent type: {}", n);

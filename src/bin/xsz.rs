@@ -409,17 +409,12 @@ impl Actor for Collector {
 struct F {
     taskpak: TaskPak<File_>,
     global_nfile: Arc<AtomicU64>,
-    local_nfile: u16,
+    local_nfile: u64,
 }
 impl Sink for F {
     type Item = File_;
     fn consume(&mut self, f: File_) -> impl Future + Send {
         self.local_nfile += 1;
-        if self.local_nfile > 16 * 1024 {
-            self.global_nfile
-                .fetch_add(self.local_nfile as _, Ordering::Relaxed);
-            self.local_nfile = 0;
-        }
         self.taskpak.push(f)
     }
 }

@@ -23,15 +23,19 @@ pub struct File_ {
 }
 
 impl File_ {
+    #[inline]
     pub fn new(fd: Arc<OwnedFd>, path: Box<Path>, ino: u64) -> Self {
         Self { fd, path, ino }
     }
+    #[inline]
     pub fn borrow_fd(&self) -> BorrowedFd<'_> {
         self.fd.as_fd()
     }
+    #[inline]
     pub fn ino(&self) -> u64 {
         self.ino
     }
+    #[inline]
     pub fn path(&self) -> &Path {
         &self.path
     }

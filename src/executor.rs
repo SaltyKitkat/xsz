@@ -1,5 +1,6 @@
 use std::{
     future::Future,
+    hint::cold_path,
     pin::pin,
     sync::{Arc, LazyLock},
     task::{Context, Poll, Wake, Waker},
@@ -31,11 +32,13 @@ impl Executor {
                     }
                 })
             {
+                cold_path();
                 eprintln!("Failed to spawn worker thread: {}", e);
             }
         }
         Self { sender, receiver }
     }
+    #[inline]
     fn schedule(&self, runnable: Runnable) {
         self.sender.send(runnable).unwrap();
     }
@@ -69,7 +72,10 @@ where
                 Ok(r) => {
                     r.run();
                 }
-                Err(e) => eprintln!("{}", e),
+                Err(e) => {
+                    cold_path();
+                    eprintln!("{}", e)
+                }
             }
         }
     });

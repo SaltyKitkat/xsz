@@ -26,13 +26,17 @@ impl<T: Send + 'static> TaskPak<T> {
         }
     }
 
+    #[inline]
     pub fn sender(&self) -> &Sender<Box<[T]>> {
         &self.sender
     }
 
+    #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
+
+    #[inline]
     pub(crate) fn is_full(&self) -> bool {
         self.inner.len() >= Self::SIZE
     }

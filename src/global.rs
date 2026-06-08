@@ -1,4 +1,5 @@
 use std::{
+    hint::cold_path,
     process::exit,
     sync::{
         LazyLock,
@@ -52,26 +53,39 @@ impl Global {
     }
 }
 
+#[inline]
 const fn global() -> &'static Global {
     static GLOBAL: Global = Global::new();
     &GLOBAL
 }
 
+#[inline]
 const fn global_err() -> &'static AtomicBool {
     &global().err
 }
 
+#[inline]
 const fn bool_to_result(is_err: bool) -> Result<(), ()> {
-    if is_err { Err(()) } else { Ok(()) }
+    if is_err {
+        cold_path();
+        Err(())
+    } else {
+        Ok(())
+    }
 }
+
+#[inline]
 pub fn get_err() -> Result<(), ()> {
     bool_to_result(global_err().load(Ordering::Relaxed))
 }
 
+#[cold]
 pub fn set_err() -> Result<(), ()> {
+    cold_path();
     bool_to_result(global_err().swap(true, Ordering::Relaxed))
 }
 
+#[inline]
 pub fn config() -> &'static Config {
     &global().config
 }

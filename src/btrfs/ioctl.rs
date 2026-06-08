@@ -64,6 +64,7 @@ pub struct Sv2Args {
 }
 
 impl Sv2Args {
+    #[inline]
     pub fn from_sk(sk: IoctlSearchKey) -> Self {
         Self {
             key: sk,
@@ -72,6 +73,7 @@ impl Sv2Args {
         }
     }
 
+    #[inline]
     pub fn buf(&self) -> &[u8; 65536] {
         &self.buf
     }
@@ -87,6 +89,7 @@ pub struct SearchHeader {
     pub len: u32,
 }
 impl SearchHeader {
+    #[inline]
     pub unsafe fn from_raw(buf: &[u8]) -> Self {
         unsafe { buf.as_ptr().cast::<Self>().read() }
     }

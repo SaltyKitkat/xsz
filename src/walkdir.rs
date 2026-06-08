@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque, hash_map::Entry},
+    hint::cold_path,
     io,
     marker::Send,
     os::fd::OwnedFd,
@@ -90,10 +91,12 @@ impl JobMgr {
         Some(JobChunk { dev, wq })
     }
 
+    #[inline]
     fn is_empty(&self) -> bool {
         self.jobs.is_empty()
     }
 
+    #[inline]
     fn clear(&mut self) {
         self.jobs.clear()
     }
@@ -166,6 +169,7 @@ impl WalkDir {
         });
     }
 
+    #[inline(never)]
     fn cleanup(&mut self) {
         self.global_joblist.clear();
         self.pending_walkers = Default::default();
@@ -212,6 +216,7 @@ impl Actor for WalkDir {
             }
             self.job_balance().await;
         } else {
+            cold_path();
             self.cleanup();
         }
         Ok(())
@@ -248,6 +253,7 @@ where
         let mut newfs_dirs = Vec::new();
         while let Some(dir_path) = dirs.pop_back() {
             if get_err().is_err() {
+                cold_path();
                 break;
             }
             let read_dir = match open(
@@ -259,6 +265,7 @@ where
             {
                 Ok(rd) => rd,
                 Err(e) => {
+                    cold_path();
                     eprintln!("{}: {}", dir_path.display(), e);
                     continue;
                 }
@@ -268,6 +275,7 @@ where
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
+                        cold_path();
                         eprintln!("{}: {}", dir_path.display(), e);
                         continue;
                     }
