@@ -47,7 +47,7 @@ impl Scale {
                 let bits = cnt * 10;
                 let integer = num >> bits;
                 let tail = num & ((1 << bits) - 1);
-                let real_v = (num as f64) / (1 << bits) as f64;
+                let real_v = (num as f64) / (1u64 << bits) as f64;
                 if tail == 0 || integer >= 10 {
                     return format!("{:.0}{}", real_v, UNITS[cnt] as char);
                 }
@@ -284,7 +284,7 @@ impl CompsizeStat {
         let total_disk = self.prealloc.disk + self.stat.iter().map(|s| s.disk).sum::<u64>();
         let total_uncomp = self.prealloc.uncomp + self.stat.iter().map(|s| s.uncomp).sum::<u64>();
         let total_refd = self.prealloc.refd + self.stat.iter().map(|s| s.refd).sum::<u64>();
-        write_table_header(
+        write_table(
             f,
             "Type",
             "Perc",
@@ -304,20 +304,6 @@ impl CompsizeStat {
         Ok(())
     }
 }
-fn write_table_header(
-    f: &mut dyn Write,
-    ty: impl Display,
-    percentage: impl Display,
-    disk_usage: impl Display,
-    uncomp_usage: impl Display,
-    refd_usage: impl Display,
-) -> std::io::Result<()> {
-    writeln!(
-        f,
-        "{:<10} {:<8} {:<12} {:<13} {:<12}",
-        ty, percentage, disk_usage, uncomp_usage, refd_usage
-    )
-}
 
 fn write_table(
     f: &mut dyn Write,
@@ -329,7 +315,7 @@ fn write_table(
 ) -> std::io::Result<()> {
     writeln!(
         f,
-        "{:<10} {:>4} {:>11} {:>12} {:>12}",
+        "{:<10} {:>4} {:>14} {:>16} {:>16}",
         ty, percentage, disk_usage, uncomp_usage, refd_usage
     )
 }
