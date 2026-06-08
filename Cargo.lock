@@ -270,7 +270,7 @@ dependencies = [
 
 [[package]]
 name = "xsz"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "async-task",
  "futures-lite",
