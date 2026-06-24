@@ -89,8 +89,11 @@ pub struct SearchHeader {
     pub len: u32,
 }
 impl SearchHeader {
+    /// # Safety
+    /// `buf` must contain at least `size_of::<SearchHeader>()` (32) bytes.
+    /// The caller must ensure the buffer is valid for reads.
     #[inline]
     pub unsafe fn from_raw(buf: &[u8]) -> Self {
-        unsafe { buf.as_ptr().cast::<Self>().read() }
+        unsafe { buf.as_ptr().cast::<Self>().read_unaligned() }
     }
 }
