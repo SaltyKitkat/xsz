@@ -127,6 +127,25 @@ impl IoctlSearchItem<ExtentData> {
     }
 }
 
+/// Advance a btrfs search key `(objectid, type, offset)` by one position.
+/// Wraps offset → type → objectid when fields overflow.
+#[inline]
+fn advance_key(objectid: &mut u64, r#type: &mut u32, offset: &mut u64) {
+    if *offset == u64::MAX {
+        cold_path();
+        *offset = 0;
+        if *r#type == u32::MAX {
+            cold_path();
+            *r#type = 0;
+            *objectid = objectid.saturating_add(1);
+        } else {
+            *r#type += 1;
+        }
+    } else {
+        *offset += 1;
+    }
+}
+
 #[derive(Debug)]
 pub struct Sv2Wrapper {
     sv2_arg: Box<Sv2Args>,
@@ -142,7 +161,7 @@ impl Sv2Wrapper {
             ioctl(fd, ctl)?;
         }
         self.nrest_item = self.sv2_arg.key.nr_items;
-        self.last = self.nrest_item <= 512;
+        self.last = self.nrest_item <= 4;
         self.pos = 0;
         Ok(())
     }
@@ -164,9 +183,12 @@ impl Sv2Wrapper {
         if self.finish() {
             return None;
         }
+        let buf_len = self.sv2_arg.buf().len();
+        assert!(self.pos + size_of::<SearchHeader>() <= buf_len);
         let header = unsafe { SearchHeader::from_raw(&self.sv2_arg.buf()[self.pos..]) };
         let item_start = self.pos + size_of::<SearchHeader>();
         let item_end = item_start + header.len as usize;
+        assert!(item_end <= buf_len);
         self.pos = item_end;
         self.nrest_item -= 1;
         // Check AFTER decrement so the last item in a batch triggers key advancement.
@@ -174,7 +196,12 @@ impl Sv2Wrapper {
         if self.need_ioctl() {
             self.sv2_arg.key.min_objectid = header.objectid;
             self.sv2_arg.key.min_type = header.r#type;
-            self.sv2_arg.key.min_offset = header.offset + 1;
+            self.sv2_arg.key.min_offset = header.offset;
+            advance_key(
+                &mut self.sv2_arg.key.min_objectid,
+                &mut self.sv2_arg.key.min_type,
+                &mut self.sv2_arg.key.min_offset,
+            );
             self.sv2_arg.key.nr_items = u32::MAX;
         }
         let buf: &[u8] = &self.sv2_arg.buf()[item_start..item_end];
@@ -193,6 +220,9 @@ impl Sv2Wrapper {
         self.pos = 0;
         self.nrest_item = 0;
         self.last = false;
+        // Ask for the maximum batch on the next ioctl, in case a previous
+        // partial batch left a smaller nr_items behind.
+        self.sv2_arg.key.nr_items = u32::MAX;
     }
 }
 
@@ -226,7 +256,8 @@ impl<'inner, 'fd, T: TreeItem> Sv2ItemIter<'inner, 'fd, T> {
         sv2.sv2_arg.key.min_type = T::TYPE as _;
         sv2.sv2_arg.key.max_type = T::TYPE as _;
         sv2.reset();
-        // other fields not reset, maybe wrong?
+        // tree_id, min_transid, max_transid, and the unused fields are
+        // initialized once in Worker::new() and never change across files.
         Self {
             inner: sv2,
             fd,

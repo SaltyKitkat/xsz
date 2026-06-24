@@ -211,7 +211,8 @@ impl ExtentType {
     }
 }
 
-// le on disk and eb
+// le on disk and eb — packed to match the on-disk btrfs extent data layout.
+#[repr(C, packed)]
 pub struct ExtentData {
     pub generation: u64,
     pub ram_bytes: u64,
@@ -228,7 +229,8 @@ pub struct ExtentData {
 
 impl ExtentData {
     pub const fn inline_header_size() -> u32 {
-        8 + 8 + 1 + 1 + 2 + 1
+        // `disk_bytenr` starts immediately after the inline header fields.
+        std::mem::offset_of!(Self, disk_bytenr) as u32
     }
     pub fn is_inline(&self) -> bool {
         ExtentType::Inline == ExtentType::from_u8(self.r#type)
