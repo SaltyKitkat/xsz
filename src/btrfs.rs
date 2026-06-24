@@ -138,6 +138,69 @@ impl IoctlSearchItem<ExtentData> {
 }
 
 #[derive(Debug)]
+pub struct Sv2Iter<'fd> {
+    sv2_arg: Box<Sv2Args>,
+    fd: BorrowedFd<'fd>,
+    pos: usize,
+    nrest_item: u32,
+    last: bool,
+}
+
+impl<'fd> Sv2Iter<'fd> {
+    fn call_ioctl(&mut self) -> Result<(), Errno> {
+        unsafe {
+            let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(&mut self.sv2_arg);
+            ioctl(self.fd, ctl)?;
+        }
+        self.nrest_item = self.sv2_arg.key.nr_items;
+        self.last = self.nrest_item <= 512;
+        self.pos = 0;
+        Ok(())
+    }
+    #[inline]
+    fn need_ioctl(&self) -> bool {
+        self.nrest_item == 0 && !self.last
+    }
+    #[inline]
+    fn finish(&self) -> bool {
+        self.nrest_item == 0 && self.last
+    }
+
+    fn next(&mut self) -> Option<Result<(SearchHeader, &[u8]), Errno>> {
+        if self.need_ioctl()
+            && let Err(e) = self.call_ioctl()
+        {
+            return Some(Err(e));
+        }
+        if self.finish() {
+            return None;
+        }
+        let header = unsafe { SearchHeader::from_raw(&self.sv2_arg.buf()[self.pos..]) };
+        if self.nrest_item == 0 && !self.last {
+            self.sv2_arg.key.min_objectid = header.objectid;
+            self.sv2_arg.key.min_type = header.r#type;
+            self.sv2_arg.key.min_offset = header.offset + 1;
+            self.sv2_arg.key.nr_items = u32::MAX;
+        }
+        let item_start = self.pos + size_of::<SearchHeader>();
+        let item_end = item_start + header.len as usize;
+        let buf: &[u8] = &self.sv2_arg.buf()[item_start..item_end];
+        self.pos = item_end;
+        self.nrest_item -= 1;
+        Some(Ok((header, buf)))
+    }
+    pub fn new(sv2_arg: Box<Sv2Args>, fd: BorrowedFd<'fd>) -> Self {
+        Self {
+            sv2_arg,
+            fd,
+            pos: 0,
+            nrest_item: 0,
+            last: false,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Sv2ItemIter<'arg, 'fd, T> {
     sv2_arg: &'arg mut Sv2Args,
     fd: BorrowedFd<'fd>,
