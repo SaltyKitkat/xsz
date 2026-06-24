@@ -1,7 +1,7 @@
 use crate::{
     actor::{Actor, Sink},
     btrfs::{
-        ExtentInfo, Sv2ItemIter,
+        ExtentInfo, Sv2ItemIter, Sv2Wrapper,
         ioctl::{IoctlSearchKey, Sv2Args},
         tree,
     },
@@ -11,14 +11,14 @@ use crate::{
 
 pub struct Worker<S> {
     sink: S,
-    sv2_args: Box<Sv2Args>,
+    sv2: Sv2Wrapper,
 }
 
 impl<S: Sink<Item = ExtentInfo>> Worker<S> {
     pub fn new(sink: S) -> Self {
         Self {
             sink,
-            sv2_args: Box::new(Sv2Args::from_sk(IoctlSearchKey::new(
+            sv2: Sv2Wrapper::new(Box::new(Sv2Args::from_sk(IoctlSearchKey::new(
                 0,
                 0,
                 0,
@@ -28,12 +28,12 @@ impl<S: Sink<Item = ExtentInfo>> Worker<S> {
                 u64::MAX,
                 tree::r#type::EXTENT_DATA,
                 tree::r#type::EXTENT_DATA,
-            ))),
+            )))),
         }
     }
 
     pub(crate) async fn handle_file(&mut self, f: File_) -> Result<(), ()> {
-        let iter = Sv2ItemIter::new(&mut self.sv2_args, f.borrow_fd(), f.ino());
+        let iter = Sv2ItemIter::new(&mut self.sv2, f.borrow_fd(), f.ino());
         for extent in iter {
             let extent = match extent {
                 Ok(extent) => extent,

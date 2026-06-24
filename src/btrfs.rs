@@ -69,16 +69,6 @@ impl ExtentInfo {
     }
 }
 
-impl<T: TreeItem> IoctlSearchItem<T> {
-    unsafe fn from_le_raw(buf: &[u8]) -> Self {
-        unsafe {
-            let header = SearchHeader::from_raw(&buf[..size_of::<SearchHeader>()]);
-            let item = T::from_le_raw(&buf[size_of::<SearchHeader>()..]);
-            Self { header, item }
-        }
-    }
-}
-
 impl IoctlSearchItem<ExtentData> {
     pub fn parse(&self) -> Result<Option<ExtentInfo>, String> {
         let hlen = self.header.len;
@@ -138,19 +128,18 @@ impl IoctlSearchItem<ExtentData> {
 }
 
 #[derive(Debug)]
-pub struct Sv2Iter<'fd> {
+pub struct Sv2Wrapper {
     sv2_arg: Box<Sv2Args>,
-    fd: BorrowedFd<'fd>,
     pos: usize,
     nrest_item: u32,
     last: bool,
 }
 
-impl<'fd> Sv2Iter<'fd> {
-    fn call_ioctl(&mut self) -> Result<(), Errno> {
+impl Sv2Wrapper {
+    fn call_ioctl(&mut self, fd: BorrowedFd) -> Result<(), Errno> {
         unsafe {
-            let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(&mut self.sv2_arg);
-            ioctl(self.fd, ctl)?;
+            let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(&mut *self.sv2_arg);
+            ioctl(fd, ctl)?;
         }
         self.nrest_item = self.sv2_arg.key.nr_items;
         self.last = self.nrest_item <= 512;
@@ -166,9 +155,9 @@ impl<'fd> Sv2Iter<'fd> {
         self.nrest_item == 0 && self.last
     }
 
-    fn next(&mut self) -> Option<Result<(SearchHeader, &[u8]), Errno>> {
+    fn next(&mut self, fd: BorrowedFd) -> Option<Result<(SearchHeader, &[u8]), Errno>> {
         if self.need_ioctl()
-            && let Err(e) = self.call_ioctl()
+            && let Err(e) = self.call_ioctl(fd)
         {
             return Some(Err(e));
         }
@@ -176,107 +165,71 @@ impl<'fd> Sv2Iter<'fd> {
             return None;
         }
         let header = unsafe { SearchHeader::from_raw(&self.sv2_arg.buf()[self.pos..]) };
-        if self.nrest_item == 0 && !self.last {
+        let item_start = self.pos + size_of::<SearchHeader>();
+        let item_end = item_start + header.len as usize;
+        self.pos = item_end;
+        self.nrest_item -= 1;
+        // Check AFTER decrement so the last item in a batch triggers key advancement.
+        // Must update key BEFORE taking the buf slice to avoid borrow-conflict with sv2_arg.
+        if self.need_ioctl() {
             self.sv2_arg.key.min_objectid = header.objectid;
             self.sv2_arg.key.min_type = header.r#type;
             self.sv2_arg.key.min_offset = header.offset + 1;
             self.sv2_arg.key.nr_items = u32::MAX;
         }
-        let item_start = self.pos + size_of::<SearchHeader>();
-        let item_end = item_start + header.len as usize;
         let buf: &[u8] = &self.sv2_arg.buf()[item_start..item_end];
-        self.pos = item_end;
-        self.nrest_item -= 1;
         Some(Ok((header, buf)))
     }
-    pub fn new(sv2_arg: Box<Sv2Args>, fd: BorrowedFd<'fd>) -> Self {
+
+    pub fn new(sv2_arg: Box<Sv2Args>) -> Self {
         Self {
             sv2_arg,
-            fd,
             pos: 0,
             nrest_item: 0,
             last: false,
         }
     }
+    pub fn reset(&mut self) {
+        self.pos = 0;
+        self.nrest_item = 0;
+        self.last = false;
+    }
 }
 
 #[derive(Debug)]
-pub struct Sv2ItemIter<'arg, 'fd, T> {
-    sv2_arg: &'arg mut Sv2Args,
+pub struct Sv2ItemIter<'inner, 'fd, T> {
+    inner: &'inner mut Sv2Wrapper,
     fd: BorrowedFd<'fd>,
-    pos: usize,
-    nrest_item: u32,
-    last: bool,
     _phantom: PhantomData<T>,
 }
 impl<T: TreeItem> Iterator for Sv2ItemIter<'_, '_, T> {
     type Item = Result<IoctlSearchItem<T>, Errno>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.need_ioctl()
-            && let Err(e) = self.call_ioctl()
-        {
-            return Some(Err(e));
-        }
-
-        if self.finish() {
-            return None;
-        }
-        let ret = unsafe { IoctlSearchItem::from_le_raw(&self.sv2_arg.buf()[self.pos..]) };
-        self.pos += size_of::<SearchHeader>() + ret.header.len as usize;
-        self.nrest_item -= 1;
-        if self.need_ioctl() {
-            self.sv2_arg.key.min_offset = ret.header.offset + 1;
-            self.sv2_arg.key.nr_items = u32::MAX;
-        }
+        let (header, buf) = match self.inner.next(self.fd)? {
+            Ok((header, buf)) => (header, buf),
+            Err(e) => return Some(Err(e)),
+        };
+        let item = unsafe { T::from_le_raw(buf) };
+        let ret = IoctlSearchItem { header, item };
         Some(Ok(ret))
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (
-            self.nrest_item as usize,
-            if self.last {
-                Some(self.nrest_item as usize)
-            } else {
-                None
-            },
-        )
     }
 }
 impl<T: TreeItem> FusedIterator for Sv2ItemIter<'_, '_, T> {}
-impl<'arg, 'fd, T: TreeItem> Sv2ItemIter<'arg, 'fd, T> {
-    fn call_ioctl(&mut self) -> Result<(), Errno> {
-        unsafe {
-            let ctl = Updater::<'_, BTRFS_IOCTL_SEARCH_V2, _>::new(self.sv2_arg);
-            ioctl(self.fd, ctl)?;
-        }
-        self.nrest_item = self.sv2_arg.key.nr_items;
-        self.last = self.nrest_item <= 512;
-        self.pos = 0;
-        Ok(())
-    }
-    #[inline]
-    fn need_ioctl(&self) -> bool {
-        self.nrest_item == 0 && !self.last
-    }
-    #[inline]
-    fn finish(&self) -> bool {
-        self.nrest_item == 0 && self.last
-    }
-    pub fn new(sv2_arg: &'arg mut Sv2Args, fd: BorrowedFd<'fd>, objectid: u64) -> Self {
-        sv2_arg.key.min_objectid = objectid;
-        sv2_arg.key.max_objectid = objectid;
-        sv2_arg.key.nr_items = u32::MAX;
-        sv2_arg.key.min_offset = 0;
-        sv2_arg.key.max_offset = u64::MAX;
-        sv2_arg.key.min_type = T::TYPE as _;
-        sv2_arg.key.max_type = T::TYPE as _;
+impl<'inner, 'fd, T: TreeItem> Sv2ItemIter<'inner, 'fd, T> {
+    pub fn new(sv2: &'inner mut Sv2Wrapper, fd: BorrowedFd<'fd>, objectid: u64) -> Self {
+        sv2.sv2_arg.key.min_objectid = objectid;
+        sv2.sv2_arg.key.max_objectid = objectid;
+        sv2.sv2_arg.key.nr_items = u32::MAX;
+        sv2.sv2_arg.key.min_offset = 0;
+        sv2.sv2_arg.key.max_offset = u64::MAX;
+        sv2.sv2_arg.key.min_type = T::TYPE as _;
+        sv2.sv2_arg.key.max_type = T::TYPE as _;
+        sv2.reset();
         // other fields not reset, maybe wrong?
         Self {
-            sv2_arg,
+            inner: sv2,
             fd,
-            pos: 0,
-            nrest_item: 0,
-            last: false,
             _phantom: PhantomData,
         }
     }

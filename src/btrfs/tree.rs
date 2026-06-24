@@ -227,7 +227,7 @@ pub struct ExtentData {
 }
 
 impl ExtentData {
-    pub const fn inline_header_size() -> usize {
+    pub const fn inline_header_size() -> u32 {
         8 + 8 + 1 + 1 + 2 + 1
     }
     pub fn is_inline(&self) -> bool {
@@ -238,10 +238,14 @@ impl ExtentData {
 impl TreeItem for ExtentData {
     const TYPE: u8 = r#type::EXTENT_DATA;
     fn raw_size(&self) -> u32 {
-        8 + 8 + 1 + 1 + 2 + 1 + 8 * 4
+        if self.is_inline() {
+            return Self::inline_header_size();
+        }
+        Self::inline_header_size() + 8 * 4
     }
     unsafe fn from_le_raw(buf: &[u8]) -> Self {
         let mut ptr = buf.as_ptr();
+        assert!(buf.len() >= Self::inline_header_size() as usize);
         unsafe {
             let generation = ptr.cast::<u64>().read_unaligned().to_le();
             ptr = ptr.add(8);
@@ -255,6 +259,20 @@ impl TreeItem for ExtentData {
             ptr = ptr.add(2);
             let r#type = ptr.cast::<u8>().read_unaligned().to_le();
             ptr = ptr.add(1);
+            if ExtentType::from_u8(r#type) == ExtentType::Inline {
+                return Self {
+                    generation,
+                    ram_bytes,
+                    compression,
+                    encryption,
+                    other_encoding,
+                    r#type,
+                    disk_bytenr: 0,
+                    disk_num_bytes: 0,
+                    offset: 0,
+                    num_bytes: 0,
+                };
+            }
             let disk_bytenr = ptr.cast::<u64>().read_unaligned().to_le();
             ptr = ptr.add(8);
             let disk_num_bytes = ptr.cast::<u64>().read_unaligned().to_le();
@@ -274,7 +292,7 @@ impl TreeItem for ExtentData {
                 offset,
                 num_bytes,
             };
-            assert!(buf.len() >= ret.raw_size() as usize);
+            assert!(buf.len() == ret.raw_size() as usize);
             ret
         }
     }
