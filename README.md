@@ -38,11 +38,19 @@ Options:
     -b, --bytes             display raw bytes instead of human-readable sizes
     -x, --one-file-system   don't cross filesystem boundaries
     -j N, --jobs=N          allow N jobs at once
+    -t, --tree-scan         scan btrfs tree instead of walking directory (faster on subvolumes)
 ```
 
 ## Important Notes
 
 This project has not undergone rigorous testing. Use it in production environments at your own risk.
+
+**`-t` / `--tree-scan` mode** scans the btrfs tree per-inode instead of
+walking the directory hierarchy. Disk Usage and Uncompressed numbers
+are consistent between modes. The "Referenced" column will differ when
+hardlinks exist: walkdir counts each path's reference separately, while
+tree-scan counts each extent once.
+
 If you encounter any issues or have suggestions for improvement, please feel free to open an issue or join the discussion.
 
 ## Contribution
@@ -98,13 +106,19 @@ A: TL;DR: Because we use multi-threading, and do less syscalls.
    
    - we use multi-threading to walkdir because when cache is hot, a single-thread walkdir can be the bottleneck.
 
+   - `-t` mode skips directory walks entirely by scanning the btrfs tree directly.
+     This avoids opening each file individually and is especially faster on large subvolumes.
+     Both modes now count symlinks (stored as inline extents in btrfs) and handle
+     hardlinks consistently for Disk Usage and Uncompressed numbers.
+
    Full version: I'm too lazy to finish this part now...
 
 Q: Oh, yes, `xsz` seems good. Can I use it as a dropin replacement for `compsize`?
 
 A: Yes, and no. We try to have the same cli-arguments with `compsize`, but we added a `-j`
-   so you can set the number of worker threads. And, `xsz` is not widely used and tested like
-   `compsize`. So welcome to have a try. And if you find the result is different from `compsize`,
+   so you can set the number of worker threads, and `-t` to enable tree scan mode.
+   And, `xsz` is not widely used and tested like `compsize`. So welcome to have a try.
+   And if you find the result is different from `compsize`,
    it's expected because we do real rounding instead of just drop the tail like `compsize`
    since v0.4.1 release(commit 9549fa5).
 

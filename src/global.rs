@@ -10,7 +10,11 @@ use std::{
 use palc::Parser;
 
 const HELP_MSG: &str = "xsz displays total space used by set of files, taking into account
-compression, reflinks, partially overwritten extents.";
+compression, reflinks, partially overwritten extents.
+
+Use -t / --tree-scan when operating on a btrfs subvolume root to scan
+the tree directly instead of walking the directory hierarchy. This can
+be significantly faster on large subvolumes.";
 
 #[derive(Parser)]
 #[command(long_about = HELP_MSG)]
