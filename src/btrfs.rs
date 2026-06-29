@@ -12,8 +12,8 @@ pub mod ioctl;
 pub mod tree;
 
 pub struct IoctlSearchItem<T> {
-    pub(self) header: SearchHeader,
-    pub(self) item: T,
+    pub(crate) header: SearchHeader,
+    pub(crate) item: T,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -174,7 +174,7 @@ impl Sv2Wrapper {
         self.nrest_item == 0 && self.last
     }
 
-    fn next(&mut self, fd: BorrowedFd) -> Option<Result<(SearchHeader, &[u8]), Errno>> {
+    pub(crate) fn next(&mut self, fd: BorrowedFd) -> Option<Result<(SearchHeader, &[u8]), Errno>> {
         if self.need_ioctl()
             && let Err(e) = self.call_ioctl(fd)
         {

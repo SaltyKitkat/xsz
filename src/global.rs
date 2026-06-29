@@ -2,8 +2,8 @@ use std::{
     hint::cold_path,
     process::exit,
     sync::{
-        LazyLock,
         atomic::{AtomicBool, Ordering},
+        LazyLock,
     },
 };
 
@@ -27,6 +27,9 @@ pub struct Config {
     /// print fragment length distribution summary
     #[arg(short = 'F', long)]
     pub frag: bool,
+    /// scan btrfs tree instead of walking directory (faster on subvolumes)
+    #[arg(short = 't', long)]
+    pub tree_scan: bool,
     #[arg(required = true, value_name = "file-or-dir")]
     pub args: Vec<String>,
 }

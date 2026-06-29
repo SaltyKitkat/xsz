@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod btrfs;
 pub mod executor;
+pub mod scan_tree;
 pub mod fs_util;
 pub mod global;
 pub mod taskpak;

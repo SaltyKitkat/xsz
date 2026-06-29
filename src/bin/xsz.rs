@@ -2,6 +2,7 @@ use std::{
     fmt::Display,
     io::{Write, stdout},
     num::NonZeroU64,
+    path::PathBuf,
     process::exit,
     sync::{
         Arc,
@@ -21,6 +22,7 @@ use xsz::{
     executor::block_on,
     fs_util::File_,
     global::{config, get_err},
+    scan_tree,
     spawn,
     taskpak::TaskPak,
     walkdir::WalkDir,
@@ -424,25 +426,39 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() {
     let nworkers = config().jobs;
-    let (worker_tx, worker_rx) = bounded(nworkers as usize);
     let (sender, r) = bounded(nworkers as usize);
     let collector = Collector::new();
     let nfile = Arc::new(AtomicU64::new(0));
-    let fcb = {
-        let nfile = nfile.clone();
-        move || F {
-            taskpak: TaskPak::new(worker_tx.clone()),
-            global_nfile: nfile.clone(),
-            local_nfile: 0,
+
+    if config().tree_scan {
+        let path = PathBuf::from(&config().args[0]);
+        let nfile_clone = nfile.clone();
+        spawn(async move {
+            let sink = S(TaskPak::new(sender));
+            match scan_tree::scan_subvol(sink, &path).await {
+                Ok(cnt) => nfile_clone.store(cnt, Ordering::Relaxed),
+                Err(()) => {}
+            }
+        });
+    } else {
+        let (worker_tx, worker_rx) = bounded(nworkers as usize);
+        let fcb = {
+            let nfile = nfile.clone();
+            move || F {
+                taskpak: TaskPak::new(worker_tx.clone()),
+                global_nfile: nfile.clone(),
+                local_nfile: 0,
+            }
+        };
+        WalkDir::spawn(fcb, &config().args, nworkers);
+        for _ in 0..nworkers {
+            let sender = sender.clone();
+            let worker = Worker::new(S(TaskPak::new(sender)));
+            spawn(worker.run(worker_rx.clone()));
         }
-    };
-    WalkDir::spawn(fcb, &config().args, nworkers);
-    for _ in 0..nworkers {
-        let sender = sender.clone();
-        let worker = Worker::new(S(TaskPak::new(sender)));
-        spawn(worker.run(worker_rx.clone()));
+        drop(sender);
     }
-    drop(sender);
+
     let collector = block_on(collector.run(r));
     if get_err().is_err() {
         exit(1)
