@@ -216,6 +216,15 @@ impl Sv2Wrapper {
             last: false,
         }
     }
+    /// Set the min search key for the next ioctl call.
+    #[inline]
+    pub(crate) fn set_min_key(&mut self, objectid: u64, r#type: u32, offset: u64) {
+        self.sv2_arg.key.min_objectid = objectid;
+        self.sv2_arg.key.min_type = r#type;
+        self.sv2_arg.key.min_offset = offset;
+        self.sv2_arg.key.nr_items = u32::MAX;
+    }
+
     pub fn reset(&mut self) {
         self.pos = 0;
         self.nrest_item = 0;
