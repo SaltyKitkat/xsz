@@ -1,8 +1,9 @@
 use std::{
+    collections::HashSet,
     fmt::Display,
     io::{Write, stdout},
     num::NonZeroU64,
-    path::PathBuf,
+    path::Path,
     process::exit,
     sync::{
         Arc,
@@ -428,15 +429,27 @@ fn main() {
     let nfile = Arc::new(AtomicU64::new(0));
 
     if config().tree_scan {
-        let path = PathBuf::from(&config().args[0]);
-        let nfile_clone = nfile.clone();
-        spawn(async move {
-            let sink = S(TaskPak::new(sender));
-            match scan_tree::scan_subvol(sink, &path).await {
-                Ok(cnt) => nfile_clone.store(cnt, Ordering::Relaxed),
-                Err(()) => {}
+        use xsz::fs_util::find_subvol_root;
+        let mut roots = HashSet::new();
+        for arg in &config().args {
+            if let Ok(root) = find_subvol_root(Path::new(arg)) {
+                roots.insert(root);
             }
-        });
+        }
+        for root in roots {
+            let sender = sender.clone();
+            let nfile = nfile.clone();
+            spawn(async move {
+                let sink = S(TaskPak::new(sender));
+                match scan_tree::scan_subvol(sink, &root).await {
+                    Ok(cnt) => {
+                        nfile.fetch_add(cnt, Ordering::Relaxed);
+                    }
+                    Err(()) => {}
+                }
+            });
+        }
+        drop(sender);
     } else {
         let (worker_tx, worker_rx) = bounded(nworkers as usize);
         let fcb = {
