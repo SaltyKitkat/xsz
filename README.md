@@ -51,6 +51,16 @@ are consistent between modes. The "Referenced" column will differ when
 hardlinks exist: walkdir counts each path's reference separately, while
 tree-scan counts each extent once.
 
+## Changelog
+
+### 0.5.0 — 2026-06-29
+
+- **`-t` / `--tree-scan`**: new flag to scan btrfs tree directly instead of
+  walking directory hierarchy. Up to 4× faster on large subvolumes.
+- **Inline dedup**: xsz now deduplicates inline extents by inode
+- **Symlink support**: symlinks (stored as inline extents in btrfs) are now
+  counted.
+
 If you encounter any issues or have suggestions for improvement, please feel free to open an issue or join the discussion.
 
 ## Contribution
