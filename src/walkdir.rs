@@ -309,7 +309,8 @@ where
                             },
                         });
                     }
-                } else if file_type.is_file() {
+                } else if file_type.is_file() || file_type.is_symlink() {
+                    // Symlink targets are stored as inline EXTENT_DATA in btrfs.
                     self.file_handler
                         .consume(File_::new(fd.clone(), path, entry.ino()))
                         .await;

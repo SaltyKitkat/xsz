@@ -22,8 +22,7 @@ use xsz::{
     executor::block_on,
     fs_util::File_,
     global::{config, get_err},
-    scan_tree,
-    spawn,
+    scan_tree, spawn,
     taskpak::TaskPak,
     walkdir::WalkDir,
     worker::Worker,
@@ -211,10 +210,7 @@ impl ExtentInfoSink for CompsizeStat {
         let comp = extent.comp();
         let stat = extent.stat();
         match extent.r#type() {
-            ExtentType::Inline => {
-                unreachable!()
-            }
-            ExtentType::Regular => {
+            ExtentType::Inline | ExtentType::Regular => {
                 self.stat[comp.as_usize()].refd += stat.refd;
             }
             ExtentType::Prealloc => {
@@ -227,12 +223,7 @@ impl ExtentInfoSink for CompsizeStat {
         let comp = extent.comp();
         let stat = extent.stat();
         match extent.r#type() {
-            ExtentType::Inline => {
-                self.stat[comp.as_usize()].disk += stat.disk;
-                self.stat[comp.as_usize()].uncomp += stat.uncomp;
-                self.stat[comp.as_usize()].refd += stat.refd;
-            }
-            ExtentType::Regular => {
+            ExtentType::Inline | ExtentType::Regular => {
                 self.stat[comp.as_usize()].disk += stat.disk;
                 self.stat[comp.as_usize()].uncomp += stat.uncomp;
                 self.stat[comp.as_usize()].refd += stat.refd;
@@ -327,6 +318,7 @@ pub struct Collector {
     nextent: u64,
     ninline: u64,
     extent_set: IntSet<u64>,
+    inline_ino_set: IntSet<u64>,
 }
 
 impl Collector {
@@ -341,6 +333,7 @@ impl Collector {
             nextent: 0,
             ninline: 0,
             extent_set: Default::default(),
+            inline_ino_set: Default::default(),
         }
     }
     pub fn nextent_unique(&self) -> u64 {
@@ -382,8 +375,12 @@ impl Actor for Collector {
             self.nextent += 1;
             let bytenr = extent.disk_bytenr();
             if bytenr == 0 {
-                self.ninline += 1;
-                self.stat.unique(&extent);
+                if self.inline_ino_set.insert(extent.objectid()) {
+                    self.ninline += 1;
+                    self.stat.unique(&extent);
+                } else {
+                    self.stat.duplic(&extent);
+                }
             } else if self.extent_set.insert(bytenr) {
                 self.stat.unique(&extent);
             } else {
