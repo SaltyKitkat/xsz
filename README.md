@@ -51,6 +51,11 @@ are consistent between modes. The "Referenced" column will differ when
 hardlinks exist: walkdir counts each path's reference separately, while
 tree-scan counts each extent once.
 
+**Inline extent dedup** deduplicates by inode number only. This works
+correctly for hardlinks and snapshots (same inode = same data), but may
+under-count if the same inode number happens to appear in different
+subvolumes for unrelated files.
+
 ## Changelog
 
 ### 0.5.0 — 2026-06-29
