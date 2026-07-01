@@ -3,11 +3,11 @@ use std::{
     fmt::Display,
     io::{Write, stdout},
     num::NonZeroU64,
-    path::Path,
+    path::{Path, PathBuf},
     process::exit,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -436,16 +436,27 @@ fn main() {
                 roots.insert(root);
             }
         }
-        for root in roots {
+        let roots: Arc<Vec<PathBuf>> = Arc::new(roots.into_iter().collect());
+        let next_root = Arc::new(AtomicUsize::new(0));
+        let n_tree_workers = (nworkers - 1).max(1) as usize;
+        for _ in 0..n_tree_workers.min(roots.len()) {
             let sender = sender.clone();
             let nfile = nfile.clone();
+            let roots = Arc::clone(&roots);
+            let next_root = Arc::clone(&next_root);
             spawn(async move {
-                let sink = S(TaskPak::new(sender));
-                match scan_tree::scan_subvol(sink, &root).await {
-                    Ok(cnt) => {
-                        nfile.fetch_add(cnt, Ordering::Relaxed);
+                loop {
+                    let idx = next_root.fetch_add(1, Ordering::Relaxed);
+                    if idx >= roots.len() {
+                        break;
                     }
-                    Err(()) => {}
+                    let sink = S(TaskPak::new(sender.clone()));
+                    match scan_tree::scan_subvol(sink, &roots[idx]).await {
+                        Ok(cnt) => {
+                            nfile.fetch_add(cnt, Ordering::Relaxed);
+                        }
+                        Err(()) => {}
+                    }
                 }
             });
         }
