@@ -60,7 +60,7 @@ impl IoctlSearchKey {
 pub struct Sv2Args {
     pub key: IoctlSearchKey,
     buf_size: u64,
-    buf: [u8; 65536],
+    buf: [u8; 16384],
 }
 
 impl Sv2Args {
@@ -68,13 +68,13 @@ impl Sv2Args {
     pub fn from_sk(sk: IoctlSearchKey) -> Self {
         Self {
             key: sk,
-            buf_size: 65536,
-            buf: [0; 65536],
+            buf_size: 16384,
+            buf: [0; 16384],
         }
     }
 
     #[inline]
-    pub fn buf(&self) -> &[u8; 65536] {
+    pub fn buf(&self) -> &[u8; 16384] {
         &self.buf
     }
 }
