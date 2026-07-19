@@ -15,6 +15,22 @@ speed improvements across a wider range of hardware configurations.
 Under cache-hot conditions, it achieves over 50% higher performance even in single-threaded mode,
 and scales further to deliver markedly faster speeds when running with multiple threads.
 
+## Installation
+
+With Nix, run xsz directly from the flake:
+
+```sh
+nix run github:SaltyKitkat/xsz -- /path/to/dir
+```
+
+Or install it into your profile:
+
+```sh
+nix profile add github:SaltyKitkat/xsz
+```
+
+The flake also provides a Rust development shell through `nix develop`.
+
 ## Usage
 
 `xsz` follows the same command-line syntax as `compsize`. To get started, simply run:
