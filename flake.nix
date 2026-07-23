@@ -39,24 +39,12 @@
         }
       );
 
-      apps = forAllSystems (
-        system:
-        let
-          package = self.packages.${system}.default;
-          xsz = {
-            type = "app";
-            program = nixpkgs.lib.getExe package;
-          };
-        in
-        {
-          inherit xsz;
-          default = xsz;
-          xfrag = {
-            type = "app";
-            program = nixpkgs.lib.getExe' package "xfrag";
-          };
-        }
-      );
+      apps = forAllSystems (system: {
+        default = {
+          type = "app";
+          program = nixpkgs.lib.getExe self.packages.${system}.default;
+        };
+      });
 
       devShells = forAllSystems (
         system:
